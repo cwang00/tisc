@@ -50,6 +50,9 @@ float 	**D,			/*Equivalent rigidity grid*/
 	**ice_velx_df, **ice_vely_df, 
 	**q, 
 	**evaporation,  	/*Evaporation distribution*/
+	**elk, // lake evaporation [L/T]
+	**etr, // riparian evapotranspiration [L/T]
+	**eth, // hillslope evapotranspiration [L/T]
 	**precipitation,  	/*Runoff distribution (only liquid precipitation)*/
 	**precipitation_snow,  	/*Snowfall distribution*/
 	**precipitation_file,  	/*Runoff distribution defined in file*/

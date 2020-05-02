@@ -28,6 +28,11 @@ float
 	Timeini=0, Timefinal=0, /*Initial and final Times [s]*/
 	dt=0, 					/*Time increment [s]*/
 	dt_eros, 				/*Approximate dt for surface processes.*/
+	// Initial and final year and month for the current time step
+	yearini_ts = 0, yearfinal_ts = 0, monthini_ts = 0, monthfinal_ts = 0,
+	Timetotal,				// Total time duration [Myr]
+	N_dt, idt 				// Number and counter of tectonic time steps
+	N_dt_eros, idt_eros,	// Number and counter of surface process time steps
 	tau ;					/*Viscoelastic relaxation Time [s]*/
 
 

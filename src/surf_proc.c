@@ -60,6 +60,9 @@ extern float
 	**ice_velx_sl, **ice_vely_sl, 
 	**ice_velx_df, **ice_vely_df, 
 	**evaporation, 
+	**elk, // lake evaporation [L/T]
+	**etr, // riparian evapotranspiration [L/T]
+	**eth, // hillslope evapotranspiration [L/T]
 	**precipitation, 
 	**precipitation_snow, 
 	**precipitation_file, 
@@ -74,6 +77,8 @@ extern char
 extern float 
 	g,
 	denswater, 
+	lheat,
+	pi,
 	densice; 
 
 
@@ -115,7 +120,17 @@ int 	Diffusive_Eros (float Kerosdif, float dt, float dt_eros);
 int 	Landslide_Transport (float critical_slope, float dt, float dt_eros);
 int 	read_file_node_defs(float dt_st);
 
-
+/*Declaration of functions borrowed from DPWM*/
+float   e0(float TT);
+float   slope_es_fcn(float T_avg);
+float   Psych_fcn(float dCellP);
+float   CellP_fcn(float elev);
+void    RefET_fcn(int i,int j, float T_avg_cell,float T_max_cell,float T_min_cell,
+			   float T_avg_basin,float T_max_basin,float T_min_basin,
+			   float T_dew_basin,float elev_cell,float elev_basin_average, float slope,
+			   int DOY,float windspeed, float K_rs,float dLat,float albedo,
+			   float Azimuth,float RefET_OUT[10],bool bRH, float RHmax,
+			   float RHmin, float Kcln);
 
 
 
@@ -355,7 +370,7 @@ int Calculate_Discharge (struct GRIDNODE *sortcell, float *total_lost_water, flo
 
 			/*Calculate the distance to the output node*/
 			switch (drainage[row][col].type) {
-			  case 'R':
+			  case 'R': // This runs the code for 'E'
 			  case 'E':
 				if (IN_DOMAIN(drow, dcol))
 					dd = sqrt(dy*(drow-row)*dy*(drow-row) + dx*(dcol-col)*dx*(dcol-col));
@@ -378,8 +393,12 @@ int Calculate_Discharge (struct GRIDNODE *sortcell, float *total_lost_water, flo
 			if (drainage[row][col].type == 'E') {
 				/*Put into this outlet the rain from lake nodes draining here.*/
 				for (int i=0; i<Lake[il].n; i++) {
-					if (drainage[Lake[il].row[i]][Lake[il].col[i]].dr_row == row && drainage[Lake[il].row[i]][Lake[il].col[i]].dr_col == col) {
-						runoff += precipitation[row][col] * dx*dy;
+					/*Polish code and fix possible error ChaoWang201912300824*/
+					int irow, icol;
+					irow = Lake[il].row[i];
+					icol = Lake[il].col[i];
+					if (drainage[irow][icol].dr_row == row && drainage[irow][icol].dr_col == col) {
+						runoff += precipitation[irow][icol] * dx*dy; // Possible error fixed ChaoWang201912280816
 					}
 				}
 			}
@@ -444,8 +463,25 @@ int Calculate_Discharge (struct GRIDNODE *sortcell, float *total_lost_water, flo
 			/*Transfers water.*/
 			if (IN_DOMAIN(drow, dcol)) {
 				/*Remove evapotranspirated water from the rivers*/
-				*total_evap_water			 	+= drainage[row][col].discharge * MIN_2(lost_rate*dd, 1);
-				drainage[row][col].discharge	-= drainage[row][col].discharge * MIN_2(lost_rate*dd, 1);
+
+				// When we reach a node (row, col), all nodes higher than this node
+				// has been accounted. So now discharge at this node is the
+				// cumulative discharge with ET and loss in upstream deducted.
+				// Deduct riparian ET and channel infiltration for river node here.
+				// ChaoWang202004221132
+
+				// Upgraded ET from riparian and hillslope area, ChaoWang202004241028
+				if (hydro_model == 4){
+					float et_rh;
+					et_rh = et_riparian_hillslope(drainage[row][col].discharge,dd,row,col);
+					*total_evap_water += et_rh*dx*dy;
+					drainage[row][col].discharge -= et_rh*dx*dy;
+				}
+				else{
+					*total_evap_water			 	+= drainage[row][col].discharge * MIN_2(lost_rate*dd, 1);
+					drainage[row][col].discharge	-= drainage[row][col].discharge * MIN_2(lost_rate*dd, 1);
+				}
+				// Transfers water
 				switch (drainage[drow][dcol].type) {
 				case 'L':
 					/*Check: this shouldn't happen (a node transferring to a lake with a higher level).*/
@@ -617,6 +653,7 @@ int Define_Drainage_Net (struct GRIDNODE *sortcell)
 	normal lakes. Note that if a lake has no connection with the boundary 
 	then it will either be a closed lake with no outlet or it will fill 
 	above sea-level, looking for an outlet. 
+	(depending on if ET> or < uphill discharge into the lake)
 
 	The following algorithm is applied to every node, starting from the 
 	lowest in ascending order. Initially nothing is known about the
@@ -2899,6 +2936,7 @@ int Calculate_Precipitation_Evaporation ()
  			altitude = topo[row][col];
  			il=drainage[row][col].lake;
  			if (il) {
+ 				// Return lowest lake elevation
  				altitude = topo[Lake[il].row[Lake[il].n-1]][Lake[il].col[Lake[il].n-1]];
  				/*Sea*/
  				IF_LAKE_IS_SEA(il) altitude = sea_level;
@@ -2919,6 +2957,9 @@ int Calculate_Precipitation_Evaporation ()
 			case 3: {
 			Orographic_Precipitation_Evaporation_conservative (Krain, windazimut, relative_humidity);
 		break;
+		}
+		case 4: {
+			land_surface_process();
 		}
 	}
 
@@ -2981,7 +3022,7 @@ int Calculate_Precipitation_Evaporation ()
 		float total_rain_test=0, total_evap_test=0;
 		for (i=0; i<Ny; i++) for (j=0; j<Nx; j++) {
 			total_rain_test += precipitation[i][j]; total_evap_test += evaporation[i][j];
-			if (fabs(evaporation[i][j]*secsperyr)>1e3 || fabs(evaporation[i][j]*secsperyr)>1e3 || isnan(precipitation[i][j]) || isnan(evaporation[i][j]) ) 
+			if (fabs(precipitation[i][j]*secsperyr)>1e3 || fabs(evaporation[i][j]*secsperyr)>1e3 || isnan(precipitation[i][j]) || isnan(evaporation[i][j]) ) 
 				PRINT_ERROR("\aPrecipitation: [%d][%d]  P,E = %.4f , %.4f m/yr", i, j, precipitation[i][j]*secsperyr, evaporation[i][j]*secsperyr);
 		}
 		PRINT_DEBUG("Total P, E = %.2e, %.2e m3/s", total_rain_test*dx*dy, total_evap_test*dx*dy);
@@ -3111,7 +3152,7 @@ int Orographic_Precipitation_Evaporation_conservative (float windvel, float wind
 	/*Check results*/
 	for(i=0; i<Ny; i++)  for(j=0; j<Nx; j++) {
 		if (!done[i][j]) PRINT_ERROR("[%d][%d] not done! ", i, j);
-		if (fabs(evaporation[i][j]*secsperyr)>1e3 || fabs(evaporation[i][j]*secsperyr)>1e3 || isnan(precipitation[i][j]) || isnan(evaporation[i][j])) 
+		if (fabs(precipitation[i][j]*secsperyr)>1e3 || fabs(evaporation[i][j]*secsperyr)>1e3 || isnan(precipitation[i][j]) || isnan(evaporation[i][j])) 
 			PRINT_ERROR("\aPrecipitation: [%d][%d] P,E = %.4f , %.4f m/yr  %.2f h  windvel=%.2f m/s, %.2f m/yr, Wmax=%f m", i, j, precipitation[i][j]*secsperyr, evaporation[i][j]*secsperyr, dtwind/3600, windvel, rain*secsperyr, Wmax);
 	}
 
@@ -3158,7 +3199,7 @@ int Precipitation_Evaporation_at_cell (int i, int j, float *Wcol, float windvel,
 		precipitation[i][j] = 0;
 		evaporation[i][j] = evaporation_ct * (1+beta*windvel);
 	}
-	if (fabs(evaporation[i][j]*secsperyr)>1e3 || fabs(evaporation[i][j]*secsperyr)>1e3 || isnan(precipitation[i][j]) || isnan(evaporation[i][j])) 
+	if (fabs(precipitation[i][j]*secsperyr)>1e3 || fabs(evaporation[i][j]*secsperyr)>1e3 || isnan(precipitation[i][j]) || isnan(evaporation[i][j])) 
 		PRINT_ERROR("\aPrecipitation: [%d][%d] P,E = %.4f , %.4f m/yr  %.2f h  windvel=%.2f m/s, %.2f m/yr, Wmax=%f m", i, j, precipitation[i][j]*secsperyr, evaporation[i][j]*secsperyr, dtwind/3600, windvel, rain*secsperyr, Wmax);
 	return(1);
 }
@@ -3197,5 +3238,492 @@ float max_water_in_air_colum (int i, int j)
 	if (Wmax>1e-1) PRINT_WARNING("Water content in column is too high: Wmax=%.2e m", Wmax);
 	return (Wmax);
 }
+
+
+// ET from grid cell with type R or E
+// ChaoWang202004241004
+float et_riparian_hillslope(float Qw,float dd,float row,float col){
+	float wc, wr, Ac, Ar, et;
+	const float kw = 1.1, aw = 0.5, kr = 16.0, ar = 0.9;
+	wc = width_channel(Qw, kw, aw);
+	wr = width_riparian(wc, kr, ar);
+	Ac = wc*dd;
+	Ar = wr*dd;
+	et = eth[row][col]*(dy*dy-Ar)+etr[row][col]*Ar;
+	if (et > Qw) et = Qw;
+	return (et);
+}
+
+// Land surface processes for TISC-Hydro
+// ChaoWang202004211709
+int land_surface_process(){
+	int row, col, il;
+	/*
+	elk: lake evaporation [L/T]
+	etr: riparian evapotranspiration [L/T]
+	eth: hillslope evapotranspiration [L/T]
+	The unit originally in TISC is m/s
+
+	float **elk, **etr, **eth;
+	elk = alloc_matrix(Ny, Nx);
+	etr = alloc_matrix(Ny, Nx);
+	eth = alloc_matrix(Ny, Nx);
+	*/
+	for (row=0; row<Ny; row++)
+		for (col=0; col<Nx; col++){
+			RefET_fcn(DOY, T_avg, T_max, T_min,
+					  T_avg_basin, T_max_basin, T_min_basin, T_dew_basin,
+					  bRH, RHmax_Daily, RHmin_Daily, windcell, Kcln, K_rs, 
+					  cellalbedo, topo[row][col], elev_avg, slope, Lat_avg,
+					  Azimuth, RefET_OUT);
+			il = drainage[row][col].lake;
+			if (il){
+				d_Rn = RefET_OUT[8];
+				elk[row][col] = evaporation_penman_equilibrium(d_Rn,T_avg_cell,elev);
+				evaporation[row][col] = elk[row][col];
+			}
+			else {
+				etr[row][col] = evapotranspiration_potential(DOY,T_avg,Lat_avg);
+				eth[row][col] = evapotranspiration_actual(pressure, PET);
+			}
+		}
+
+	return (1);
+}
+
+
+// equilibrium free water / lake evaporation
+// from equation (6B3.10), p. 265, (Dingman, 2015)
+// ChaoWang202004211100
+float evaporation_penman_equilibrium(float d_Rn,float T_avg_cell,float elev_cell){
+	float slope_es;
+	float dPsych;
+	/*
+	d_Rn: Net shortwave plus longwave radiation
+	T_avg_cell: Cell average temperature
+	elev_cell: 
+	*/
+	slope_es = slope_es_fcn(T_avg_cell);
+	dCellP = CellP_fcn(elev_cell); // Atmospheric pressure at cell (kPa)
+	dPsych = Psych_fcn(dCellP); // Psychometric constant (kPa·ºC^-1)
+	return (slope_es*d_Rn/(denswater*lheat*(slope_es+dPsych)));
+}
+
+// Potential evapotranspiration
+// ChaoWang202004211630
+float evapotranspiration_potential(int DOY,float T_avg_cell,float dLat){
+	float daylength;
+	float rLat=dLat*pi/180.f;
+	float peth;
+	d_dec = 0.409f*sin(2.f*pi*DOY/365.f-1.39f);
+	d_ws = acos(-tan(rLat)*tan(d_dec));
+	daylength = 24/pi*d_ws;
+	// Hamon (1963) estimated daily PET. p. 294 (Dingman, 2015)
+	peth = 29.8*daylength*e0(T_avg_cell)/(T_avg_cell+273.2);
+	return (peth);
+}
+
+// Actual evapotranspiration
+// ChaoWang202004211648
+float evapotranspiration_actual(float P, float PET){
+	float w=2.0;
+	float et;
+	// Budyko-type equation, equation (6.72), p. 298, (Dingman, 2015)
+	et = P/pow(1+pow(P/PET,w),1.0/w);
+	return (et);
+}
+
+// Channel width from discharge (eq. (5), Berry et al., 2019)
+// ChaoWang202004231716
+float width_channel(float Qw, float kw, float aw){
+	/*
+	Qw: stream discharge
+	kw, aw: regression coefficients
+	kw = 1.1, aw = 0.5 (used by Doe Han)
+	*/
+	return (kw*pow(Qw,aw));
+}
+
+// Riaprian width from channel width (eq. (13), Berry et al., 2019)
+// ChaoWang202004231721
+float width_riparian(float wc, float kr, float ar){
+	/*
+	wc: channel width
+	kr, ar: regression coefficients
+	kr = 16, ar = 0.9 (in Berry et al., 2019)
+	*/
+	return (kr*pow(wc,ar));
+}
+
+
+// Mean slope using ArcGIS algorithm
+// https://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-slope-works.htm
+// ChaoWang202004290928
+
+
+
+// Solar radiation calculation
+// Code borrowed from DPWM
+// ChaoWang202003102140
+
+// Functions from Climate.cpp in DPWM
+
+// Correction for saturation vapor pressure (FAO 56, eq.11)
+float e0(float TT){
+	return (0.6108f * exp(17.27f * TT / (TT + 237.3f)));
+}
+
+// Slope of saturation vapour pressure curve (FAO-56 eq 13; p. 37)
+float slope_es_fcn(float T_avg){
+	float slope_es;
+	slope_es = 4098.f*(0.6108f*exp((17.27f*T_avg)/(T_avg+237.3f)))/pow(T_avg+237.3f,2.f);
+	return (slope_es);
+}
+
+//Atmospheric pressure as a function of elevation (FAO-56 eq 7; p. 31)
+float CellP_fcn(float elev){
+	float CellP;
+	CellP = 101.3f*pow((293.f - 0.0065f * elev)/293.f,5.26f);
+	return CellP;
+}
+
+//Psychrometric constant (FAO-56 eq 8; pp. 31-32)
+float Psych_fcn(float dCellP){
+	float dPsych; //psychrometric constant (kPa/ºC)
+	float cp;	//specific heat at a constant pressure (MJ/(kg*ºC))
+	float eratio; //ratio of molecular weight of water vapour/dry air
+
+	cp = 0.001013f; //FAO-56 p. 32
+	eratio = 0.622f; //FAO-56 p. 32
+	dPsych = (cp*dCellP)/(eratio*lheat);
+	return dPsych;
+}
+
+// Reference evapotranspiration (Trezza and Allen 2006)
+void RefET_fcn(int DOY,float T_avg_cell,float T_max_cell,float T_min_cell,
+			   float T_avg_basin,float T_max_basin,float T_min_basin,float T_dew_basin,
+			   bool bRH,float RHmax,float RHmin,float windspeed,float Kcln,float K_rs
+			   float albedo,float elev_cell,float elev_basin_average,float slope,
+			   float dLat,float Azimuth,float RefET_OUT[10]){
+	// Reference ET variable declarations
+	float dSolarConstant = 0.082f;	// MJ/(day·m2)
+	float dStefan = 0.000000004903f; // Stefan-Boltzman constant (MJ·K^-4·m^-2·day^-1)
+	float d_es;// saturation vapor pressure (kPa) [3-8]
+	float d_ea;// Actual vapor pressure (kPa)
+	float dTdew;// Estimated mean daily dewpoint temperature (ºC) [3-11]
+	float d_dr;// inverse square relative distance between earth and sun [23]
+	float d_dec;// Declination of the earth [24]
+	float d_ws;// sunset hour angle for a horizontal surface [26]
+	float d_Rnl; // Net outgoing longwave radiation (MJ/day·m2) [39]
+	float d_Rn;//Net radiation (MJ/day·m2) [40]
+	float slope_es; // Slope of Saturation vapor pressure curve (kPa ºC-1) [13]
+	float dET0;  //Reference Potential ET (mm/day) [6]
+	float dCellP;//Atmospheric pressure at cell (kPa)
+	float d_ea_general;//General, actual vapor pressure
+	float Ra_hor;//Extraterrestrial radiation on a horizontal surface
+	float sinB24;//sin of mean solar elevation over a 24-hr period weighted by extraterrestrial radiation
+	float P_basin;//mean atmospheric pressure for the reference weather basin
+	float dW;//precipitable water at the reference weather basin
+	float KBo_hor;//24-hr transmissivity for beam radiation
+	float KDo_hor;//24-hr transmissivity for diffuse radiation
+	float Rsm_hor;//'measured' solar radiation on a horizontal surface
+	float tsw_hor;//total short-wave transmissivity
+	float Rb;//ratio of beam radiation
+	float dLat_eff;//the effective latitude for a given slope and aspect
+	float Rso_hor;//Clear sky solar radiation over the 24-hr period
+	float Id_hor; // Diffuse component of measured Rsm_hor for a horizontal surface
+	float Ir;//Reflected radiation component for the inclined surface
+	float dRns;//Horizontal equivalent for net short wave radiation on the incline
+	float df;//modulating function
+	float Ib;//direct beam on the inclined surface having a specific slope-aspect combination
+	float Ib_hor;//Direct beam radiation on the horizontal surface
+	float At;// Aisotropic index
+	float Id;//Diffuse component for the inclined surface
+	float Rsm_inc;// Total radiation received by the inclined surface
+	float dPsych;// =	(0.001013*dRefP)/(0.622*2.45); // Psychometric constant (kPa·ºC^-1)
+	float KD_hor;
+	float dA;
+	float dB;
+	float dC;
+	float d_wsr;
+	float d_wss;
+	float KB_hor;
+	float dArcCosTerm_pos;
+	float dArcCosTerm_neg;
+	float dRb_1;
+	float dRb_2;
+	float dRb_3;
+	float dRb_4;
+	float dRb_5;
+	float dRb_6;
+	float Rs_equiv_hor;
+	float rLat=dLat*pi/180.f;//(dLat in degree, rLat in radian)
+	float rslope=slope*pi/180.f;//(slope in degree, rslope in radian)
+	float dAzimuth=Azimuth*pi/180.f;//(Azimuth in degree, dAzimuth in radian)
+	
+	
+    // Solar Radiation and Reference Evapotranspiration on Inclined Surface
+
+	//Steps 1 though 18 are general for the basin *****************************
+	// STEP 1 - Estimate mean daily dewpoint temperature over the basin from
+	//			the reference basin (average basin elevation)
+	dTdew = T_dew_basin; // ???
+
+	// STEP 2	Calculate general, actual vapor pressure for use in the
+	//			Penman-Monteith equation and for estimating precipitable water
+	//			(W) over the application area
+	if(bRH && RHmin > 0) // ??? bRH is bool flag for max RH data
+		d_ea_general = (e0(T_min_basin)*RHmax/100+e0(T_max_basin)*RHmin/100)/2;		//Eq. 17 Allen et al 1998
+	else if (bRH)
+		d_ea_general = e0(T_min_basin)*RHmax/100;									//Eq. 18 Allen et al 1998
+	else
+		d_ea_general = e0(dTdew);													//(Eq. 14, p 37, FAO-56) [kPa]
+
+	// STEP 3	Calculate the inverse square relative distance between earth
+	//and sun
+	d_dr = 1.f+0.033f*cos(2.f*pi*DOY/365.f);										// (Eq. 23, p46, FAO 56)
+
+	// STEP 4	Calculate declination of the earth
+	d_dec = 0.409f*sin(2.f*pi*DOY/365.f-1.39f);										//(Eq. 24, p46, FAO-56)
+
+	// STEP 5	Calculate the sunset hour angle for a horizontal surface
+	d_ws = acos(-tan(rLat)*tan(d_dec));												//(Eq. 25, p46, FAO-56)
+
+	// STEP 6	Calculate extraterrestrial radiation on a horizontal surface
+	//for a 24-hr period
+	Ra_hor =(24.f*60.f/pi)*dSolarConstant*d_dr*(d_ws*sin(rLat)*sin(d_dec)+
+		cos(rLat)*cos(d_dec)*sin(d_ws));											//(Eq. 21, p46, FAO-56)
+
+	// STEP 7	Calculate sin of mean solar elevation over a 24-hr period 
+	//weighted by extraterrestrial radiation
+
+	sinB24 = sin(0.85f+0.3f*rLat*sin(2.f*pi*DOY/365.f-1.39f)-0.42f*pow(rLat,2.f))   //FAO-56 Equation 3-16, p. 227
+	if(sinB24 < 0.001f)	sinB24 = 0.001f;											//FAO-56 Equation 3-16, p. 227
+	
+	// STEP 8	Calculate mean atmospheric pressure for the reference weather
+	//basin using the average elevation of the basin
+	// Should grid cell elevation be used ???
+	P_basin = 101.3f*pow((293.f-0.0065f*elev_basin_average)/293.f,5.26f);			//FAO-56 Equation 3-4, page 224
+
+	// STEP 9	Calculate precipitable water at the reference weather basin
+	dW = 0.14f*d_ea_general*P_basin+2.1f;											//FAO-56 Equation 3-19, p. 227
+
+	// STEP 10	Calculate 24-hr transmissivity for beam radiation
+	KBo_hor = 0.98f*exp(((-0.00146f*P_basin)/(Kcln*sinB24))-0.075f*
+		pow(dW/sinB24,0.4f));														//Eq D-2, ASCE
+
+	// STEP 11	Calculate 24-hr transmissivity for diffuse radiation
+	if(KBo_hor < 0.15f)
+		KDo_hor = 0.18f+0.82f*KBo_hor;												//FAO-56 Equation 3-20
+	else
+		KDo_hor = 0.35f-0.33f*KBo_hor;												//FAO-56 Equation 3-20
+
+	// STEP 12	Calculate clear sky solar radiation over the 24-hr period
+	Rso_hor = (KBo_hor + KDo_hor)*Ra_hor;											//Eq. D-1, P. D-7, ASCE; (MJ m-2 d-1)
+
+	// STEP 13	Estimate 'measured' solar radiation on a horizontal surface
+	//(Hargreave's Method)
+	Rsm_hor = K_rs*pow((T_max_basin - T_min_basin),0.5f)*Ra_hor;					// Eq. 50, p 60 FAO-56 (MJ m-2 d-1)
+	// Allen (1997) recommends k_rs = 0.19 for high altitude
+	// Measure solar radiation if available can be substituted here
+
+	// Rsm_hor must be limited to <= Rso_hor
+	if (Rsm_hor > Rso_hor) Rsm_hor = Rso_hor;
+
+	// STEP 14	Calculate total short-wave transmissivity
+	tsw_hor = Rsm_hor / Ra_hor;
+
+	// STEP 15	Partition the atmospheric transmissivity from step 14 into its
+	//diffusive and direct beam components.  The following was modified by
+	//Trezza and Allen, 2006 from source to match YMP data
+	if (tsw_hor >= 0.78f)
+		KD_hor = 0.12f*tsw_hor;
+	else if (tsw_hor <= 0.35f)
+		KD_hor = tsw_hor - 0.249f*pow(tsw_hor,2.f);
+	else
+		KD_hor = 1.557f*tsw_hor - 1.84f*pow(tsw_hor,2.f);
+
+	// STEP 16	Calculate actual direct beam transmissivity
+	KB_hor = tsw_hor - KD_hor;														// (Allen, 1996, eq. 7)
+
+	// STEP 17	Calculate direct beam radiation on the horizontal surface
+	//based on the measured Rsm_hor
+	Ib_hor = KB_hor*Ra_hor;															// (MJ m-2 d-1)
+
+	// STEP 18	Calculate the diffuse component of measured Rsm_hor for a
+	//horizontal surface
+	Id_hor = KD_hor*Ra_hor;															// (MJ m-2 d-1)
+
+	// SETP 19	If grid cell terrain albedo is not specified, set to default
+	if (albedo < 0.f) albedo = 0.23f;
+
+	// STEP 20 Calculate ratio of beam radiation Rb (Appendix A)on an incline
+	//to the beam radiation on a horizontal plane (Rb)
+	//		dSlope is surface slope where
+	//			0 = horizontal
+	//			pi/2 radians for vertical slope
+	//				(dSlope is always positive for any aspect)
+	//		dAzimuth is the surface aspect angle where
+	//			0 = slopes oriented due south
+	//			-pi/2 rad for slopes oriented due east
+	//			+pi/2 rad for slopes oriented due west
+	//			+/- pi rad for slopes oriented due north
+
+	//Reverse direction from GIS that was given as 0 = north, pi = south
+	// Need to be checked and adjusted for TISC !!! attention
+	// ChaoWang202004031116
+	if(dAzimuth < pi)
+		dAzimuth = -(pi - dAzimuth);
+	else
+		dAzimuth = dAzimuth - pi;
+
+
+	// STEP 20a	Calculate the effective latitude for a given slope and aspect
+	//as described by Revfeim 1976 (eq 2, page 651)
+	dLat_eff = asin(cos(rslope)*sin(rLat)+sin(rslope)*cos(rLat)*
+		cos(dAzimuth+pi));
+
+	// STEP 20b	Check whether surface receives any direct beam radiation
+	//during the day
+	if (dLat_eff - d_dec >= pi/2.f)
+		Rb = 0.f;																// e.g. during winter on extreme northerly slopes
+	else {
+		// Set up for the solution of daily integration limits for
+		//beam (direct) radiation using Duffie and Beckman (1991).
+		// STEP 20c	Parameter A
+		dA = cos(rslope)+tan(rLat)*cos(dAzimuth)*sin(rslope);					// Eq. 2.20.5g, p 117, Duffue and Beckman, 1991
+
+		// STEP 20d Parameter B
+		dB = cos(d_ws)*cos(rslope)+tan(d_dec)*sin(rslope)*cos(dAzimuth);		// Eq. 2.20.5h, p 117, Duffie and Beckman, 1991
+
+		// STEP 20e	Parameter C
+		dC = sin(rslope)*sin(dAzimuth)/cos(rLat);								//Eq. 2.20.5i, p 117, Duffie and Beckman, 1991
+
+		// STEP 20	Calculate the 24-hour integration limits
+		if (pow(dA,2.f)-pow(dB, 2.f)+pow(dC,2.f) <= 0.f) {
+			//Check for negative values in square root
+			d_wsr = -d_ws;
+			d_wss = d_ws;
+		}
+		else {
+		     // if no negative values in square root, proceed ...
+			dArcCosTerm_pos = (dA*dB+dC*pow(pow(dA,2.f)-pow(dB,2.f)+
+				pow(dC,2.f),0.5f)/(pow(dA,2.f)+pow(dC,2.f)));
+			dArcCosTerm_neg = (dA*dB-dC*pow(pow(dA,2.f)-pow(dB,2.f)+
+				pow(dC,2.f),0.5f)/(pow(dA,2.f)+pow(dC,2.f)));
+			if ( (dArcCosTerm_pos < -1.f) || (dArcCosTerm_pos > 1.f))			// Check for out of bounds on arcos function for d_wsr
+				d_wsr = -d_ws;
+			else { // proceed with arcos function for d_wsr
+				d_wsr = MIN_2(d_ws,acos(dArcCosTerm_pos));						// Eq 2.20.5e, Duffie and Beckman, 1991
+				d_wsr = abs(d_wsr);
+				if ( ((dA > 0) && (dB > 0)) || (dA >= dB))
+					d_wsr = -d_wsr;
+				else
+				   d_wsr=d_wsr;
+			}
+			if ( (dArcCosTerm_neg < -1.f) || (dArcCosTerm_neg > 1.f))			// Check for out of bounds on arcos function d_wss
+				d_wss = d_ws;
+			else { // proceed with arcod function for d_wss
+				d_wss = MIN_2(d_ws,acos(dArcCosTerm_neg));						// Eq 2.20.5, Duffie and Beckman, 1991
+				d_wss = abs(d_wss);
+				if ( ((dA > 0) && (dB > 0)) || (dA >= dB))
+					d_wss = d_wss;
+				else
+					d_wss = -d_wss;
+			}
+			// Prevent negative values for Rb.
+			if ((dA < dB) && (dAzimuth > 0))
+				d_wsr = -d_wsr;
+			if ((dA < dB) && (dAzimuth < 0))
+				d_wss = -d_wss;
+		}
+		// STEP 20g	Calculate Rb
+		dRb_1 = sin(d_dec)*sin(rLat)*cos(rslope)*(d_wss - d_wsr);
+		dRb_2 = sin(d_dec)*cos(rLat)*sin(rslope)*cos(dAzimuth)*(d_wss - d_wsr);
+		dRb_3 = cos(d_dec)*cos(rLat)*cos(rslope)*(sin(d_wss)-sin(d_wsr));
+		dRb_4 = cos(d_dec)*sin(rLat)*sin(rslope)*cos(dAzimuth)*(sin(d_wss)
+			-sin(d_wsr));
+		dRb_5 = cos(d_dec)*sin(rslope)*sin(dAzimuth)*(cos(d_wss)-cos(d_wsr));
+		dRb_6 = 2.f*(cos(rLat)*cos(d_dec)*sin(d_ws)+d_ws*sin(rLat)
+			*sin(d_dec));
+		Rb  = (dRb_1 - dRb_2 + dRb_3 + dRb_4 - dRb_5) / dRb_6;
+	}
+
+	// STEP 21	Calculate direct beam on the inclined surface having a specific
+	//slope-aspect combination
+	Ib = Ib_hor * Rb; // (MJ m-2 d-1)
+
+	// STEP 22	Anisotropic index on page 11 of Reindel et al., 1990, and also
+	//as in Eq. 2.16.3 in Duffie and Beckman, 1991
+	At = KB_hor;
+
+	// STEP 23	Calculate the modulating function f (as defined in Reindl et al,
+	//page 11, and Eq. 2.16.6, Duffie and Beckman, 1991)
+	df = pow(Ib_hor/Rsm_hor,0.5f);
+
+	// STEP 24	Calculate the diffuse component for the inclined surface (Eq. 5,
+	//page 11, Reindl et al, 1990, and Eq. 2.16.5, Duffie and Beckman, 1991)
+	Id = Id_hor*((1.f-At)*((1.f+cos(rslope))/2.f)*(1.f+df*pow(sin(rslope/2.f),
+		3.f))+At*Rb);															// (MJ m-2 d-1)
+
+	// STEP 25	Calculate the reflected radiation component for the inclined
+	//surface (Eq. 1, page 10, Reindl et al., 1990)
+	Ir = Rsm_hor*albedo*((1.f-cos(rslope))/2.f);								//(MJ m-2 d-1)
+
+	// STEP 26	Calculate the total radiation received by the inclined surface
+	Rsm_inc = Ib + Id + Ir;														// (MJ m-2 d-1)
+	
+	// STEP 27	Reproject Rsm_inc to a horizontal projection (equivalent)
+	Rs_equiv_hor = Rsm_inc / cos(rslope); // (MJ m-2 d-1)
+
+	// STEP 28	Calculate mean satuation vapor pressure associated with cell
+	//daily extreme temperatures
+	d_es = (e0(T_max_cell) + e0(T_min_cell)) / 2.f;								//FAO-56 Eq. 12, p. 36 (kPa)
+
+	// STEP 29	Limit actual vapor pressure of the grid cell to less than
+	//or equal to d_es
+	d_ea = MIN_2(d_ea_general,d_es); // (kPa)
+
+	// STEP 30	Slope of Saturation vapor pressure curve (kPa ºC-1)
+	slope_es = slope_es_fcn(T_avg_cell);
+
+	// STEP 31 atmospheric pressure at cell (kPa)
+	dCellP = CellP_fcn(elev_cell);
+
+	// STEP 32	Psychometric constant (kPa·ºC^-1)
+	dPsych = Psych_fcn(dCellP);
+
+	// STEP 33	Calculate the horizontal equivalent for net short wave
+	//radiation on the incline
+	dRns = (1.f - albedo)*Rs_equiv_hor;											// Eq. 38, p. 51, FAO-56
+
+	// STEP 34	Calculate the net outgoing long wave radiation
+	d_Rnl = dStefan*((pow(T_max_cell+273.16f,4.f)+pow(T_min_cell+273.16f,4.f))/2.f)*
+		(0.34f-0.14f*pow(d_ea,0.5f))*(1.35f*MIN_2(Rsm_hor/Rso_hor,1.f)-0.35f);	// Eq. 39, p. 52, FAO-56
+
+	// STEP 35	Calculate net radiation on the inclined surface projected
+	//to a horizontal projection
+	d_Rn = dRns - d_Rnl;														// Eq. 40, p. 53, FAO-56)
+	d_Rn = MAX_2(d_Rn,0.f);														//Fix for high slope cells
+
+	// STEP 36	Calculate ET0
+	dET0 = (0.408f*slope_es*d_Rn+dPsych*900.f/(T_avg_cell+273.f)*windspeed*
+		(d_es-d_ea))/(slope_es+dPsych*(1.f+0.34f*windspeed));// Eq 6, p. 24, FAO-56
+
+	RefET_OUT[0] = dET0;
+	RefET_OUT[1] = Ra_hor;
+	RefET_OUT[2] = Rso_hor;
+	RefET_OUT[3] = Rsm_hor;
+	RefET_OUT[4] = Rsm_inc;
+	RefET_OUT[5] = Rs_equiv_hor;
+	RefET_OUT[6] = dRns;
+	RefET_OUT[7] = d_Rnl;
+	RefET_OUT[8] = d_Rn;
+	RefET_OUT[9] = 24/pi*d_ws; //number of daylight hours for horizontal surface (Allen et al 1998, eq. 34)
+
+}
+
+
+
 
 

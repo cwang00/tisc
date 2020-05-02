@@ -237,6 +237,9 @@ int inputs (int argc, char **argv)
 	dx = (xmax-xmin) / (Nx-1);
 	dy = (ymax-ymin) / (Ny-1);
 	dxy = sqrt(dx*dx+dy*dy);
+	Timetotal = Timefinal - Timeini; // Total model time duration [Myr]
+	N_dt = Timetotal / dt; // Number of tectonic time steps
+	N_dt_eros = Timetotal / dt_eros; // Number of surface process time steps
 	dt *= Matosec;
 	dt_eros *= Matosec;
 	tau *= Matosec;
