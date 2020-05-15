@@ -125,8 +125,8 @@ float   e0(float TT);
 float   slope_es_fcn(float T_avg);
 float   Psych_fcn(float dCellP);
 float   CellP_fcn(float elev);
-void    RefET_fcn(int i,int j, float T_avg_cell,float T_max_cell,float T_min_cell,
-			   float T_avg_basin,float T_max_basin,float T_min_basin,
+void    RefET_fcn(float T_avg_cell,float T_max_cell,float T_min_cell,
+			   float T_max_basin,float T_min_basin,
 			   float T_dew_basin,float elev_cell,float elev_basin_average, float slope,
 			   int DOY,float windspeed, float K_rs,float dLat,float albedo,
 			   float Azimuth,float RefET_OUT[10],bool bRH, float RHmax,
@@ -207,6 +207,7 @@ int Surface_Transport (float **topo, float **topo_ant, float dt, float dt_eros, 
 		Fluvial_Transport(sortcell, dt_st, erosed_model, &total_lost_sed_mass, lake_instant_fill);
 
 		Ice_EroSed(ice_velx_sl, ice_vely_sl, dt_st, &total_ice_eros, &total_ice_sedim);
+		idt_eros += 1;
 	}
 
 	if (verbose_level>=3) fprintf(stdout, "\b\b\b"); fflush(stdout);
@@ -407,6 +408,10 @@ int Calculate_Discharge (struct GRIDNODE *sortcell, float *total_lost_water, flo
 			drainage[row][col].discharge += runoff;
 
 			/*Remove evaporated lake water from outlets (evaporation in endorheic lakes is done below)*/
+			/*
+			Can this account for that some lake cells can become river cells if
+			lake evap is larger than input discharge?
+			*/
 			if (drainage[row][col].type == 'E') {
 				float lake_evap=0, input_disch, factor;
 				for (int i=0; i<Lake[il].n; i++) lake_evap += evaporation[Lake[il].row[i]][Lake[il].col[i]];
@@ -3254,10 +3259,11 @@ float et_riparian_hillslope(float Qw,float dd,float row,float col){
 	return (et);
 }
 
-// Land surface processes for TISC-Hydro
+// Land surface processes for TISC-LSM
 // ChaoWang202004211709
 int land_surface_process(){
 	int row, col, il;
+	int iday, idaytot;
 	/*
 	elk: lake evaporation [L/T]
 	etr: riparian evapotranspiration [L/T]
@@ -3269,24 +3275,30 @@ int land_surface_process(){
 	etr = alloc_matrix(Ny, Nx);
 	eth = alloc_matrix(Ny, Nx);
 	*/
-	for (row=0; row<Ny; row++)
-		for (col=0; col<Nx; col++){
-			RefET_fcn(DOY, T_avg, T_max, T_min,
-					  T_avg_basin, T_max_basin, T_min_basin, T_dew_basin,
-					  bRH, RHmax_Daily, RHmin_Daily, windcell, Kcln, K_rs, 
-					  cellalbedo, topo[row][col], elev_avg, slope, Lat_avg,
-					  Azimuth, RefET_OUT);
-			il = drainage[row][col].lake;
-			if (il){
-				d_Rn = RefET_OUT[8];
-				elk[row][col] = evaporation_penman_equilibrium(d_Rn,T_avg_cell,elev);
-				evaporation[row][col] = elk[row][col];
+	// Calculate annual average fluxes [m/s]
+	for (iday=0; iday<12; iday++)
+		idaytot = idt_eros*12+iday; // Counter of days along the erosion time step
+		for (row=0; row<Ny; row++)
+			for (col=0; col<Nx; col++){
+				elev_cell = topo[row][col];
+				il = drainage[row][col].lake;
+				if (il) elev_cell = Lake[il].alt;
+				RefET_fcn(DOY_month[iday], T_avg, T_max, T_min,
+						  T_max_basin, T_min_basin, T_dew_basin,
+						  bRH, RHmax_Daily, RHmin_Daily, windcell, Kcln, K_rs, 
+						  cellalbedo, elev_cell, elev_avg, slope, Lat_avg,
+						  Azimuth, RefET_OUT);
+				il = drainage[row][col].lake;
+				if (il){
+					d_Rn = RefET_OUT[8];
+					elk[row][col] = evaporation_penman_equilibrium(d_Rn,T_avg_cell,elev);
+					evaporation[row][col] = elk[row][col];
+				}
+				else {
+					etr[row][col] = evapotranspiration_potential(DOY,T_avg,Lat_avg);
+					eth[row][col] = evapotranspiration_actual(pressure, PET);
+				}
 			}
-			else {
-				etr[row][col] = evapotranspiration_potential(DOY,T_avg,Lat_avg);
-				eth[row][col] = evapotranspiration_actual(pressure, PET);
-			}
-		}
 
 	return (1);
 }
@@ -3401,7 +3413,7 @@ float Psych_fcn(float dCellP){
 
 // Reference evapotranspiration (Trezza and Allen 2006)
 void RefET_fcn(int DOY,float T_avg_cell,float T_max_cell,float T_min_cell,
-			   float T_avg_basin,float T_max_basin,float T_min_basin,float T_dew_basin,
+			   float T_max_basin,float T_min_basin,float T_dew_basin,
 			   bool bRH,float RHmax,float RHmin,float windspeed,float Kcln,float K_rs
 			   float albedo,float elev_cell,float elev_basin_average,float slope,
 			   float dLat,float Azimuth,float RefET_OUT[10]){

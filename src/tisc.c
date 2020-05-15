@@ -64,6 +64,7 @@ int main(int argc, char **argv)
 		surface_processes(topo);
 
 		Time += dt;
+		idt += 1;
 		fprintf(stdout, "\nT= %.4f My", Time/Matosec);
 
 		if (switch_dt_output) Write_Ouput();
@@ -251,9 +252,9 @@ int inputs (int argc, char **argv)
 	Kerosdif *= 1e6/Matosec;
 	Keroseol /= Matosec;
 	Ksedim   /= Matosec;
-	rain *= 1e6/Matosec/1e3;
+	rain *= 1e6/Matosec/1e3; // Convert unit from mm/yr to m/s
 	if (hydro_model==1) Krain *= 1e6/Matosec/1e3/1e3;
-	evaporation_ct *= 1e6/Matosec/1e3;
+	evaporation_ct *= 1e6/Matosec/1e3; // Convert unit from mm/yr to m/s
 	lost_rate *= 1e-2 * 1e-3;
 	temp_sea_level += TEMP_FREEZE_WATER; /*converts from C to K*/
 	switch_write_file_Blocks = YES; 

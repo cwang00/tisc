@@ -31,11 +31,13 @@ float
 	// Initial and final year and month for the current time step
 	yearini_ts = 0, yearfinal_ts = 0, monthini_ts = 0, monthfinal_ts = 0,
 	Timetotal,				// Total time duration [Myr]
-	N_dt, idt 				// Number and counter of tectonic time steps
-	N_dt_eros, idt_eros,	// Number and counter of surface process time steps
 	tau ;					/*Viscoelastic relaxation Time [s]*/
 
-
+int 
+	N_dt, idt=0 			// Number and counter of tectonic time steps
+	N_dt_eros, idt_eros=0,	// Number and counter of surface process time steps
+	// Day of year of the middle days of the 12 months in each year
+	DOY_month[12] = {15,46,74,105,135,166,196,227,258,288,319,349};
 
 char
 	projectname[MAXLONFICH],/*The project name is also the root of current model file names*/
