@@ -430,6 +430,8 @@ int match_parameter (char *str1, char *str2, int show, int replace, char *line)
 	Match_Param_Replace_int ( "switch_ps",  	switch_ps,  	0 )
 	Match_Param_Replace_int ( "verbose_level",	verbose_level,  	0 )
 
+ 	Match_Param_Replace_int ( "switch_basin_out",  	switch_basin_out,		0	) //added by M Berry
+	Match_Param_Replace_int ( "switch_precipt_out",  	switch_precipt_out,		0	) //added by M Berry
 	/*Old versions:*/
 	Match_Param_Replace_flt ( "erodability",	erodibility,  	1 )
 	Match_Param_Replace_flt ( "erodability_sed",	erodibility_sed,  	1 )
@@ -622,6 +624,8 @@ int read_file_resume(char *filename)
 	fread(&total_bedrock_eros_mass, 	sizeof(float),		1, 	file);
 	fread(&total_sed_mass, 	sizeof(float),		1, 	file);
 
+	fread(&switch_basin_out, sizeof(BOOL), 1, file); // M BERRY
+	fread(&switch_precipt_out, sizeof(BOOL), 1, file); // M Berry
 	fread(&hydro_model, 	sizeof(int),		1, 	file);
 	fread(&lake_instant_fill, 	sizeof(int),		1, 	file);
 
@@ -1378,6 +1382,24 @@ int write_file_drainage ()
 	}
 	fclose(file);
 #endif
+
+//new code by m berry
+	if (switch_basin_out){
+		char 	command[300];
+		if (n_image >= 1){
+		sprintf(command, "awk '{print $1, $2, $7, $8, $3, $4}' %s.xyw > %s_%03d.qwqs", projectname, projectname,n_image);
+//x , y, x-to, y-to, q_w, q_s
+		system(command);
+		}
+	}
+	if (switch_precipt_out){
+	char 	command[300];
+	if (n_image >= 1){
+	sprintf(command, "awk '{print $1, $2, $10, $11}' %s.xyw > %s_%03d.rain", projectname, projectname,n_image);
+	system(command);
+	}
+}
+/*end of new code */
 	return (1);
 }
 
@@ -1710,6 +1732,8 @@ int write_file_resume()
 	fwrite(&total_bedrock_eros_mass, 	sizeof(float),		1, 	file);
 	fwrite(&total_sed_mass, 	sizeof(float),		1, 	file);
 
+	fwrite(&switch_basin_out, sizeof(BOOL), 1, file); // M BERRY
+	fwrite(&switch_precipt_out, sizeof(BOOL), 1, file); // M Berry
 	fwrite(&hydro_model, 	sizeof(int),		1, 	file);
 	fwrite(&lake_instant_fill, 	sizeof(int),		1, 	file);
 

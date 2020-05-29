@@ -107,7 +107,19 @@ BOOL	switch_dt_output=NO,
 	switch_write_file_Blocks, 	/*YES if Blocks (profile *.pfl) file is to be written*/
 	deform_sed;			/*YES to deform sediment automatically, based on Blocks motion*/
 
+	/*new variables by M Berry*/
 
+BOOL	switch_iso_eq,/*YES to only vary the isostatic load based on the addition of sediment. Crustal motions do not change isostatic load.*/
+			switch_topo_out, // YES to output the topography every tectonic timestep (M Berry)
+			switch_rand_time, // YES query the CPU clock for tne input seed, ensures a slightly different random topo every iteration M BERRY
+			switch_basin_out,	// YES to output the bas file every timestep.
+	     switch_drainage_loss,    // YES to output the rdl file every timestep.
+			diff_loss, // yes to have loss rate dependant on channel width.
+			switch_precipt_out, //yes to output precip values every dt and save to *rain
+			switch_copy_out,
+			switch_profile,
+			switch_3dtopo;
+			
 /*FUNCTION DECLARATIONS:*/
 float 	*alloc_array		(int num_fil);
 double	*alloc_array_dbl	(int num_fil);
