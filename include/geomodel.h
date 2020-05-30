@@ -34,7 +34,7 @@ float
 	tau ;					/*Viscoelastic relaxation Time [s]*/
 
 int 
-	N_dt, idt=0 			// Number and counter of tectonic time steps
+	N_dt, idt=0, 			// Number and counter of tectonic time steps
 	N_dt_eros, idt_eros=0,	// Number and counter of surface process time steps
 	// Day of year of the middle days of the 12 months in each year
 	DOY_month[12] = {15,46,74,105,135,166,196,227,258,288,319,349};

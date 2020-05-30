@@ -22,6 +22,8 @@ extern struct BLOCK 	*Blocks;
 extern int
 	erosed_model, 
 	Nx, Ny, 
+	idt_eros,
+	DOY_month[12],
 	nlakes, 		/*number of lakes >= 0 */
 	nbasins, 
 	numBlocks,
@@ -120,17 +122,23 @@ int 	Diffusive_Eros (float Kerosdif, float dt, float dt_eros);
 int 	Landslide_Transport (float critical_slope, float dt, float dt_eros);
 int 	read_file_node_defs(float dt_st);
 
-/*Declaration of functions borrowed from DPWM*/
+/*Declaration of functions related to upgraded land surface model*/
+float 	et_riparian_hillslope(float Qw,float dd,int row,int col);
+int 	land_surface_process();
+float 	evaporation_penman_equilibrium(float d_Rn,float T_avg_cell,float elev_cell);
+float 	evapotranspiration_potential(int DOY,float T_avg_cell,float dLat);
+float 	evapotranspiration_actual(float P, float PET);
+float 	width_channel(float Qw, float kw, float aw);
+float 	width_riparian(float wc, float kr, float ar);
 float   e0(float TT);
 float   slope_es_fcn(float T_avg);
 float   Psych_fcn(float dCellP);
 float   CellP_fcn(float elev);
-void    RefET_fcn(float T_avg_cell,float T_max_cell,float T_min_cell,
-			   float T_max_basin,float T_min_basin,
-			   float T_dew_basin,float elev_cell,float elev_basin_average, float slope,
-			   int DOY,float windspeed, float K_rs,float dLat,float albedo,
-			   float Azimuth,float RefET_OUT[10],bool bRH, float RHmax,
-			   float RHmin, float Kcln);
+void    RefET_fcn(int DOY,float T_avg_cell,float T_max_cell,float T_min_cell,
+				float T_max_basin,float T_min_basin,float T_dew_basin,
+				BOOL bRH,float RHmax,float RHmin,float windspeed,float Kcln,float K_rs,
+				float albedo,float elev_cell,float elev_basin_average, float slope,
+				float dLat,float Azimuth,float RefET_OUT[10]);
 
 
 
@@ -3247,7 +3255,7 @@ float max_water_in_air_colum (int i, int j)
 
 // ET from grid cell with type R or E
 // ChaoWang202004241004
-float et_riparian_hillslope(float Qw,float dd,float row,float col){
+float et_riparian_hillslope(float Qw,float dd,int row,int col){
 	float wc, wr, Ac, Ar, et;
 	const float kw = 1.1, aw = 0.5, kr = 16.0, ar = 0.9;
 	wc = width_channel(Qw, kw, aw);
@@ -3264,6 +3272,11 @@ float et_riparian_hillslope(float Qw,float dd,float row,float col){
 int land_surface_process(){
 	int row, col, il;
 	int iday, idaytot;
+	float d_Rn, pressure, PET;
+	float T_avg, T_max, T_min, T_max_basin, T_min_basin, T_dew_basin,
+		  RHmax_Daily, RHmin_Daily, windcell, Kcln, K_rs, cellalbedo, elev_cell,
+		  elev_avg, slope, Lat_avg, Azimuth, RefET_OUT[10];
+	BOOL bRH;
 	/*
 	elk: lake evaporation [L/T]
 	etr: riparian evapotranspiration [L/T]
@@ -3291,11 +3304,11 @@ int land_surface_process(){
 				il = drainage[row][col].lake;
 				if (il){
 					d_Rn = RefET_OUT[8];
-					elk[row][col] = evaporation_penman_equilibrium(d_Rn,T_avg_cell,elev);
+					elk[row][col] = evaporation_penman_equilibrium(d_Rn,T_avg,elev_cell);
 					evaporation[row][col] = elk[row][col];
 				}
 				else {
-					etr[row][col] = evapotranspiration_potential(DOY,T_avg,Lat_avg);
+					etr[row][col] = evapotranspiration_potential(DOY_month[iday],T_avg,Lat_avg);
 					eth[row][col] = evapotranspiration_actual(pressure, PET);
 				}
 			}
@@ -3309,7 +3322,7 @@ int land_surface_process(){
 // ChaoWang202004211100
 float evaporation_penman_equilibrium(float d_Rn,float T_avg_cell,float elev_cell){
 	float slope_es;
-	float dPsych;
+	float dPsych, dCellP;
 	/*
 	d_Rn: Net shortwave plus longwave radiation
 	T_avg_cell: Cell average temperature
@@ -3325,7 +3338,7 @@ float evaporation_penman_equilibrium(float d_Rn,float T_avg_cell,float elev_cell
 // ChaoWang202004211630
 float evapotranspiration_potential(int DOY,float T_avg_cell,float dLat){
 	float daylength;
-	float rLat=dLat*pi/180.f;
+	float d_dec, rLat=dLat*pi/180.f, d_ws;
 	float peth;
 	d_dec = 0.409f*sin(2.f*pi*DOY/365.f-1.39f);
 	d_ws = acos(-tan(rLat)*tan(d_dec));
@@ -3414,7 +3427,7 @@ float Psych_fcn(float dCellP){
 // Reference evapotranspiration (Trezza and Allen 2006)
 void RefET_fcn(int DOY,float T_avg_cell,float T_max_cell,float T_min_cell,
 			   float T_max_basin,float T_min_basin,float T_dew_basin,
-			   bool bRH,float RHmax,float RHmin,float windspeed,float Kcln,float K_rs
+			   BOOL bRH,float RHmax,float RHmin,float windspeed,float Kcln,float K_rs,
 			   float albedo,float elev_cell,float elev_basin_average,float slope,
 			   float dLat,float Azimuth,float RefET_OUT[10]){
 	// Reference ET variable declarations
@@ -3509,7 +3522,7 @@ void RefET_fcn(int DOY,float T_avg_cell,float T_max_cell,float T_min_cell,
 	// STEP 7	Calculate sin of mean solar elevation over a 24-hr period 
 	//weighted by extraterrestrial radiation
 
-	sinB24 = sin(0.85f+0.3f*rLat*sin(2.f*pi*DOY/365.f-1.39f)-0.42f*pow(rLat,2.f))   //FAO-56 Equation 3-16, p. 227
+	sinB24 = sin(0.85f+0.3f*rLat*sin(2.f*pi*DOY/365.f-1.39f)-0.42f*pow(rLat,2.f));  //FAO-56 Equation 3-16, p. 227
 	if(sinB24 < 0.001f)	sinB24 = 0.001f;											//FAO-56 Equation 3-16, p. 227
 	
 	// STEP 8	Calculate mean atmospheric pressure for the reference weather
