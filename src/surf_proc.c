@@ -419,6 +419,16 @@ int Calculate_Discharge (struct GRIDNODE *sortcell, float *total_lost_water, flo
 			/*
 			Can this account for that some lake cells can become river cells if
 			lake evap is larger than input discharge?
+
+			If the evaporation (m/s) is calculated using 
+			Orographic_Precipitation_Evaporation_conservative(), then
+			atmospheric water balance is already calculated before calculate
+			actual evaporation from land surface. However, actual evaporation
+			from the lake can be smaller than the evaporation rate calculate
+			from the atmospheric model. And actual ET from grid cells other than
+			lakes are not recycled into atmospheric water balance calculation.
+			This might serious influence precipitation and ET spatial
+			distribution. ChaoWang202005301722
 			*/
 			if (drainage[row][col].type == 'E') {
 				float lake_evap=0, input_disch, factor;
@@ -484,8 +494,12 @@ int Calculate_Discharge (struct GRIDNODE *sortcell, float *total_lost_water, flo
 				// ChaoWang202004221132
 
 				// Upgraded ET from riparian and hillslope area, ChaoWang202004241028
+
+				// Note that now this is applied to all types of cells before
+				// water transfer. Should this be applied to only river cells?
+				// ChaoWang202005301727
 				if (hydro_model == 4){
-					float et_rh;
+					float et_rh; // Riparian and hillslope evapotranspiration
 					et_rh = et_riparian_hillslope(drainage[row][col].discharge,dd,row,col);
 					*total_evap_water += et_rh*dx*dy;
 					drainage[row][col].discharge -= et_rh*dx*dy;
@@ -3256,15 +3270,31 @@ float max_water_in_air_colum (int i, int j)
 // ET from grid cell with type R or E
 // ChaoWang202004241004
 float et_riparian_hillslope(float Qw,float dd,int row,int col){
+	/*
+	Qw: discharge at current cell
+	dd: distance to down stream cell
+	row, col: index of current cell
+	*/
 	float wc, wr, Ac, Ar, et;
+	/*
+	wc: channel width
+	wr: riparian width
+	Ac: channel plain view area
+	Ar: riparian plain view area
+	et: ET from riparian and channel areas
+	*/
 	const float kw = 1.1, aw = 0.5, kr = 16.0, ar = 0.9;
+	// Regression coefficients from (Berry et al., 2019 G3)
 	wc = width_channel(Qw, kw, aw);
 	wr = width_riparian(wc, kr, ar);
 	Ac = wc*dd;
 	Ar = wr*dd;
+	// eth and etr must have unit m/s, please double check
 	et = eth[row][col]*(dy*dy-Ar)+etr[row][col]*Ar;
+	// Why is ET from riparian and hillslope area deducted from river discharge?
+	// This is water balance in long time scale. ChaoWang202005301744
 	if (et > Qw) et = Qw;
-	return (et);
+	return (et); // Unit: m^3/s
 }
 
 // Land surface processes for TISC-LSM
@@ -3272,6 +3302,7 @@ float et_riparian_hillslope(float Qw,float dd,int row,int col){
 int land_surface_process(){
 	int row, col, il;
 	int iday, idaytot;
+	float rheight = 2.0; // Reference height for air temperature calculation
 	float d_Rn, pressure, PET;
 	float T_avg, T_max, T_min, T_max_basin, T_min_basin, T_dew_basin,
 		  RHmax_Daily, RHmin_Daily, windcell, Kcln, K_rs, cellalbedo, elev_cell,
@@ -3294,6 +3325,8 @@ int land_surface_process(){
 		for (row=0; row<Ny; row++)
 			for (col=0; col<Nx; col++){
 				elev_cell = topo[row][col];
+				T_avg = TEMPERATURE_AIR(elev_cell, rheight);
+				T_max = T_avg*1.2; T_min = T_avg*0.7;
 				il = drainage[row][col].lake;
 				if (il) elev_cell = Lake[il].alt;
 				RefET_fcn(DOY_month[iday], T_avg, T_max, T_min,
