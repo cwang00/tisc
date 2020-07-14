@@ -96,8 +96,9 @@ float	zini, 				/*altitude of the initial plate position over the sea level [m]*
 	compact_depth, 
 	last_time_file_time, 
 	random_topo=0, 			/*Maximum random variation of initial topo*/
-	**var_sea_level, 		/*Array nx2 with sea level along time*/
+	**var_sea_level, 		/*Array [n,2] with sea level along time*/
 	**var_eros_level, 		/*Variations of the erosion level (height dividing erosion and sedimentation, measured from sea_level)*/
+	**T_mean_annual_file, 	/*Array [n,2] with mean annual temperature along time [degree centigrade]*/
 	*horiz_record_time;		/*Array with times in wich to record horizons*/
 	
 BOOL	switch_dt_output=NO, 

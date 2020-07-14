@@ -818,7 +818,38 @@ int read_file_sea_level()
 	return(1);
 }
 
+int read_file_temperature(int n_temperature_points) {
+// Read temperature time series from paleoclimate data
+// Mean annual temperature is provided for each erosion time step (1000 year)
+// Total number of data points is then (number of erosion time steps)
+// ChaoWang202006071641
+	int n_temp_input_points=0;
+	FILE 	*file;
+	
+	Read_Open_Filename_Return(".TMA", "rt", "Mean annual temperature")
 
+	T_mean_annual_file = alloc_matrix(n_temperature_points, 2);
+	
+	for (;;) {
+		char auxstr[MAXLENLINE], *lin;
+		int nfields=0;
+		while (nfields<2) {
+			lin=fgets(auxstr, MAXLENLINE-1, file);
+			if (lin==NULL) break;
+			nfields=sscanf(lin, "%f %f",
+				T_mean_annual_file[n_temp_input_points][0],
+				T_mean_annual_file[n_temp_input_points][1]);
+		};
+		if (lin==NULL) break;
+		n_temp_input_points++;
+		if (n_temp_input_points>=n_temperature_points-1 ) {
+			PRINT_ERROR("Too many points (%d) in mean annual temperature file.", n_temp_input_points);
+			break;
+		}
+	}
+	fclose(file);
+	return(1);
+}
 
 int read_file_node_defs(float dt_st)
 {

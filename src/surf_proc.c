@@ -133,12 +133,11 @@ float 	width_riparian(float wc, float kr, float ar);
 float   e0(float TT);
 float   slope_es_fcn(float T_avg);
 float   Psych_fcn(float dCellP);
-float   CellP_fcn(float elev);
-void    RefET_fcn(int DOY,float T_avg_cell,float T_max_cell,float T_min_cell,
-				float T_max_basin,float T_min_basin,float T_dew_basin,
-				BOOL bRH,float RHmax,float RHmin,float windspeed,float Kcln,float K_rs,
-				float albedo,float elev_cell,float elev_basin_average, float slope,
-				float dLat,float Azimuth,float RefET_OUT[10]);
+float   Pair_fcn(float elev);
+void    netSolarRadiation(int DOY,float T_max_cell,float T_min_cell,
+				float RHmean,float windspeed,float Kcln,float K_rs,
+				float albedo,float dLat,float elev_cell, float slope,
+				float Azimuth);
 
 
 
@@ -3137,12 +3136,15 @@ int Orographic_Precipitation_Evaporation_conservative (float windvel, float wind
 	
 	/*Start from all upwind (windward) boundary cells*/
 	/*vertical boundary*/
+	// Start from upwind boundary and advect along wind direction
 	for (ib=istart; ib>=0 && ib<Ny; ib+=iincr) {
+		//Scans along vertical boundary
 		/*Incoming water content. Precipitable water usually in the order of mm and cm*/
 		Wcol = relative_humidity * max_water_in_air_colum(ib,jstart);
 		/*Go downwind (leeward) from each cell in the vertical boundary*/
 		if (fabs(windvelx)>fabs(windvely)) 
 			for (j=jstart; j>=0 && j<Nx; j+=jincr) {
+				// Advect along wind direction starting from each upwind boundary cell
 			i = ib - rint((j-jstart)/windvelx*windvely);
 			if OUT_DOMAIN(i,j) break;
 			if (!done[i][j]) Precipitation_Evaporation_at_cell (i, j, &Wcol, windvel, dtwind);
@@ -3300,15 +3302,38 @@ float et_riparian_hillslope(float Qw,float dd,int row,int col){
 // Land surface processes for TISC-LSM
 // ChaoWang202004211709
 int land_surface_process(){
-	int row, col, il;
-	int iday, idaytot;
-	float rheight = 2.0; // Reference height for air temperature calculation
-	float d_Rn, pressure, PET;
-	float T_avg, T_max, T_min, T_max_basin, T_min_basin, T_dew_basin,
-		  RHmax_Daily, RHmin_Daily, windcell, Kcln, K_rs, cellalbedo, elev_cell,
-		  elev_avg, slope, Lat_avg, Azimuth, RefET_OUT[10];
-	BOOL bRH;
+	float Tmaa_zr; // Mean annual temperature anomaly [degC] at reference elevation for the study region
+	float Rmmt; // Annual temperature range [degC]
+	float Pma_zr; // Mean annual precipitation [mm/yr] at reference elevation for the study region
+	// Calculate mean annual evapotranspiration [m/s] for each erosion time step
+	Tmaa_zr = T_mean_annual_file[idt_eros,1];
+	Rmmt = T_mean_annual_file[idt_eros,2];
+	Pma_zr = P_mean_annual_file[idt_eros,1];
+
+
+	
+
+	return (1);
+}
+
+
+float evapotranspiration_grid(float Tmaa_zr, float Rmmt, float Pma_zr){
+	int row, col, il, imon, imontot;
+	const float rheight = 1000.0; // Reference elevation of mean annual temperature [m]
+	float Tmaz; // Mean annual temperature at elevation z [degC];
+	float Tmmz[12]; // Mean monthly temperature at elevation z [degC];
+	float Tdc[12];
+	float Idt[12] = {22.5, 25.7, 28.8, 32.0, 33.7, 35.3,
+					 37.0, 34.0, 31.0, 28.0, 26.2, 24.3};
+	float Sdt[12] = {0.004, 0.005, 0.006, 0.007, 0.012, 0.018,
+					 0.023, 0.019, 0.014, 0.010, 0.008, 0.006};
+	float Tmzmax[12], Tmzmin[12]; // Maximum and minimum temperatures for each month [degC]
+	float Pmaz; // Mean annual precipitation [mm/yr] at elevation z;
+	float Rn, pressure, PET;
+	float T_avg, T_max, T_min, windcell, Kcln, K_rs, cellalbedo, elev_cell,
+		  slope, Lat_avg, Azimuth;
 	/*
+	Tmaa: Mean annual temperature anomaly at reference elevation [degC]
 	elk: lake evaporation [L/T]
 	etr: riparian evapotranspiration [L/T]
 	eth: hillslope evapotranspiration [L/T]
@@ -3319,75 +3344,81 @@ int land_surface_process(){
 	etr = alloc_matrix(Ny, Nx);
 	eth = alloc_matrix(Ny, Nx);
 	*/
-	// Calculate annual average fluxes [m/s]
-	for (iday=0; iday<12; iday++)
-		idaytot = idt_eros*12+iday; // Counter of days along the erosion time step
-		for (row=0; row<Ny; row++)
-			for (col=0; col<Nx; col++){
-				elev_cell = topo[row][col];
-				T_avg = TEMPERATURE_AIR(elev_cell, rheight);
-				T_max = T_avg*1.2; T_min = T_avg*0.7;
-				il = drainage[row][col].lake;
-				if (il) elev_cell = Lake[il].alt;
-				RefET_fcn(DOY_month[iday], T_avg, T_max, T_min,
-						  T_max_basin, T_min_basin, T_dew_basin,
-						  bRH, RHmax_Daily, RHmin_Daily, windcell, Kcln, K_rs, 
-						  cellalbedo, elev_cell, elev_avg, slope, Lat_avg,
-						  Azimuth, RefET_OUT);
-				il = drainage[row][col].lake;
+	// Set default values
+	windcell = Krain; Kcln = 0.8; K_rs = 0.19; cellalbedo = 0.23;
+	for (row=0; row<Ny; row++)
+		for (col=0; col<Nx; col++){
+			elk[row][col] = 0; etr[row][col] = 0; eth[row][col] = 0;
+			elev_cell = topo[row][col];
+			il = drainage[row][col].lake;
+			if (il) elev_cell = Lake[il].alt;
+			Tmaz = TEMPERATURE_REFZ2Z(Tmaa_zr,elev_cell);
+			Pmaz = PRECIPITATION_REFZ2Z(Pma_zr,elev_cell); // [m/s]
+			for (imon=0; imon<12; imon++)
+				imontot = idt_eros*12+imon; // Counter of months along the erosion time step
+				Tmmz[imon] = Tmaz + Rmmt*sin(2.0*pi/12.0*(imon+1.0+8.5));
+				Tdc[imon] = 0.5*(Idt[imon] - Sdt[imon]*Pmaz); // Daily temperature variation
+				Tmzmax[imon] = Tmmz[imon] + Tdc[imon];
+				Tmzmin[imon] = Tmmz[imon] - Tdc[imon];
+				T_avg = Tmmz[imon]; T_max = Tmzmax[imon]; T_min = Tmzmin[imon];
+				Rn = netSolarRadiation(DOY_month[iday], T_max, T_min,
+							RHmean, windcell, Kcln, K_rs, cellalbedo, Lat_avg, 
+							elev_cell, slope, Azimuth);
+				
 				if (il){
-					d_Rn = RefET_OUT[8];
-					elk[row][col] = evaporation_penman_equilibrium(d_Rn,T_avg,elev_cell);
+					elk[row][col] = evaporation_penman_equilibrium(Rn,T_avg,elev_cell);
 					evaporation[row][col] = elk[row][col];
 				}
 				else {
 					etr[row][col] = evapotranspiration_potential(DOY_month[iday],T_avg,Lat_avg);
 					eth[row][col] = evapotranspiration_actual(pressure, PET);
 				}
-			}
-
-	return (1);
+		}
 }
 
 
-// equilibrium free water / lake evaporation
+// Equilibrium free water / lake evaporation
 // from equation (6B3.10), p. 265, (Dingman, 2015)
 // ChaoWang202004211100
-float evaporation_penman_equilibrium(float d_Rn,float T_avg_cell,float elev_cell){
-	float slope_es;
-	float dPsych, dCellP;
+// equation and units checked
+float evaporation_penman_equilibrium(float Rn,float Tair,float elev){
+	float slope_es, Psych, Pair, Epe;
 	/*
-	d_Rn: Net shortwave plus longwave radiation
-	T_avg_cell: Cell average temperature
-	elev_cell: 
+	Rn: Net shortwave plus longwave solar radiation [MJ/m^2/day] (p. 261, Dingman, 2015)
+	Tair: Air temperature [degC] (p. 254, Dingman, 2015)
+	elev: Elevation [m]
+	denswater: [kg/m^3]
+	lheat: [MJ/kg] (p. 116, Dingman, 2015)
 	*/
-	slope_es = slope_es_fcn(T_avg_cell);
-	dCellP = CellP_fcn(elev_cell); // Atmospheric pressure at cell (kPa)
-	dPsych = Psych_fcn(dCellP); // Psychometric constant (kPa·ºC^-1)
-	return (slope_es*d_Rn/(denswater*lheat*(slope_es+dPsych)));
+	slope_es = slope_es_fcn(Tair); // [kPa/degC] (p. 254, Dingman, 2015)
+	Pair = Pair_fcn(elev); // Atmospheric pressure at elevation elev [kPa] (p. 256, Dingman, 2015)
+	Psych = Psych_fcn(Pair); // Psychometric constant [kPa/degC] (p. 256, Dingman, 2015)
+	Epe = slope_es*Rn/(denswater*lheat*(slope_es+Psych)); // derived unit [m/day]
+	return (Epe/24.0/3600.0); // [m/s]
 }
 
 // Potential evapotranspiration
 // ChaoWang202004211630
-float evapotranspiration_potential(int DOY,float T_avg_cell,float dLat){
-	float daylength;
-	float d_dec, rLat=dLat*pi/180.f, d_ws;
-	float peth;
-	d_dec = 0.409f*sin(2.f*pi*DOY/365.f-1.39f);
+// equation and units checked
+float evapotranspiration_potential(int DOY,float Ta,float dLat){
+	// Ta: mean daily temperature [degC] (p. 294, Dingman, 2015)
+	// dLat: latitude [deg]
+	float daylength, d_dec, rLat=dLat*pi/180.0, d_ws, peth;
+	d_dec = 0.409*sin(2.0*pi*DOY/365.0-1.39);
 	d_ws = acos(-tan(rLat)*tan(d_dec));
-	daylength = 24/pi*d_ws;
-	// Hamon (1963) estimated daily PET. p. 294 (Dingman, 2015)
-	peth = 29.8*daylength*e0(T_avg_cell)/(T_avg_cell+273.2);
-	return (peth);
+	daylength = 24/pi*d_ws; // [hr], (Allen et al 1998, p. 48, eq. 34), DPWM/RefET.cpp
+	// Hamon (1963) estimated daily PET. (p. 294, Dingman, 2015)
+	peth = 29.8*daylength*e0(Ta)/(Ta+273.2); // [mm/day] (p. 294, Dingman, 2015)
+	return (peth/1000.0/24.0/3600.0); // [m/s]
 }
 
 // Actual evapotranspiration
 // ChaoWang202004211648
+// equation and units checked
 float evapotranspiration_actual(float P, float PET){
-	float w=2.0;
-	float et;
+	float w=2.0, et;
 	// Budyko-type equation, equation (6.72), p. 298, (Dingman, 2015)
-	et = P/pow(1+pow(P/PET,w),1.0/w);
+	et = P/pow(1+pow(P/PET,w),1.0/w); // same unit as P
 	return (et);
 }
 
@@ -3426,57 +3457,57 @@ float width_riparian(float wc, float kr, float ar){
 
 // Functions from Climate.cpp in DPWM
 
-// Correction for saturation vapor pressure (FAO 56, eq.11)
-float e0(float TT){
-	return (0.6108f * exp(17.27f * TT / (TT + 237.3f)));
+// Saturation vapour pressure [kPa] at the air temperature Tair, (FAO 56, p. 36, eq.11)
+// equation and units checked
+float e0(float Tair){
+// Tair: air temperature [degC]
+	return (0.6108 * exp(17.27 * Tair / (Tair + 237.3)));
 }
 
 // Slope of saturation vapour pressure curve (FAO-56 eq 13; p. 37)
-float slope_es_fcn(float T_avg){
+float slope_es_fcn(float Tair){
+	// Tair: air temperature [degC]
+	// slope_es: slope of saturation vapour pressure curve at air temperature T [kPa/degC]
 	float slope_es;
-	slope_es = 4098.f*(0.6108f*exp((17.27f*T_avg)/(T_avg+237.3f)))/pow(T_avg+237.3f,2.f);
+	slope_es = 4098.f*(0.6108f*exp((17.27f*Tair)/(Tair+237.3f)))/pow(Tair+237.3f,2.f);
 	return (slope_es);
 }
 
 //Atmospheric pressure as a function of elevation (FAO-56 eq 7; p. 31)
-float CellP_fcn(float elev){
-	float CellP;
-	CellP = 101.3f*pow((293.f - 0.0065f * elev)/293.f,5.26f);
-	return CellP;
+float Pair_fcn(float elev){
+	// Pair: atmospheric pressure [kPa]
+	// elev: elevation above sea level [m]
+	float Pair;
+	Pair = 101.3f*pow((293.f - 0.0065f * elev)/293.f,5.26f);
+	return (Pair);
 }
 
 //Psychrometric constant (FAO-56 eq 8; pp. 31-32)
-float Psych_fcn(float dCellP){
-	float dPsych; //psychrometric constant (kPa/ºC)
-	float cp;	//specific heat at a constant pressure (MJ/(kg*ºC))
-	float eratio; //ratio of molecular weight of water vapour/dry air
+float Psych_fcn(float Pair){
+	// Pair: atmospheric pressure [kPa]
+	const float lheatvp = 2.45; // latent heat of vaporization [MJ/kg],
+	const float cp = 0.001013; //specific heat at a constant pressure [MJ/kg/degC]
+	const float eratio = 0.622; //ratio of molecular weight of water vapour/dry air
+	float dPsych; //psychrometric constant [kPa/degC]
 
-	cp = 0.001013f; //FAO-56 p. 32
-	eratio = 0.622f; //FAO-56 p. 32
-	dPsych = (cp*dCellP)/(eratio*lheat);
-	return dPsych;
+	dPsych = (cp*Pair)/(eratio*lheatvp);
+	return (dPsych);
 }
 
-// Reference evapotranspiration (Trezza and Allen 2006)
-void RefET_fcn(int DOY,float T_avg_cell,float T_max_cell,float T_min_cell,
-			   float T_max_basin,float T_min_basin,float T_dew_basin,
-			   BOOL bRH,float RHmax,float RHmin,float windspeed,float Kcln,float K_rs,
-			   float albedo,float elev_cell,float elev_basin_average,float slope,
-			   float dLat,float Azimuth,float RefET_OUT[10]){
-	// Reference ET variable declarations
+// Net solar radiation at the incline (but horizontal projection) (MJ m^-2 day^-1)
+void netSolarRadiation(int DOY,float T_max_cell,float T_min_cell,
+	float RHmean,float windspeed,float Kcln,float K_rs,float albedo,
+	float dLat,float elev_cell,float slope,float Azimuth){
+
 	float dSolarConstant = 0.082f;	// MJ/(day·m2)
 	float dStefan = 0.000000004903f; // Stefan-Boltzman constant (MJ·K^-4·m^-2·day^-1)
 	float d_es;// saturation vapor pressure (kPa) [3-8]
 	float d_ea;// Actual vapor pressure (kPa)
-	float dTdew;// Estimated mean daily dewpoint temperature (ºC) [3-11]
 	float d_dr;// inverse square relative distance between earth and sun [23]
 	float d_dec;// Declination of the earth [24]
 	float d_ws;// sunset hour angle for a horizontal surface [26]
 	float d_Rnl; // Net outgoing longwave radiation (MJ/day·m2) [39]
 	float d_Rn;//Net radiation (MJ/day·m2) [40]
-	float slope_es; // Slope of Saturation vapor pressure curve (kPa ºC-1) [13]
-	float dET0;  //Reference Potential ET (mm/day) [6]
-	float dCellP;//Atmospheric pressure at cell (kPa)
 	float d_ea_general;//General, actual vapor pressure
 	float Ra_hor;//Extraterrestrial radiation on a horizontal surface
 	float sinB24;//sin of mean solar elevation over a 24-hr period weighted by extraterrestrial radiation
@@ -3498,45 +3529,27 @@ void RefET_fcn(int DOY,float T_avg_cell,float T_max_cell,float T_min_cell,
 	float At;// Aisotropic index
 	float Id;//Diffuse component for the inclined surface
 	float Rsm_inc;// Total radiation received by the inclined surface
-	float dPsych;// =	(0.001013*dRefP)/(0.622*2.45); // Psychometric constant (kPa·ºC^-1)
 	float KD_hor;
-	float dA;
-	float dB;
-	float dC;
-	float d_wsr;
-	float d_wss;
+	float dA, dB, dC, d_wsr, d_wss;
 	float KB_hor;
 	float dArcCosTerm_pos;
 	float dArcCosTerm_neg;
-	float dRb_1;
-	float dRb_2;
-	float dRb_3;
-	float dRb_4;
-	float dRb_5;
-	float dRb_6;
+	float dRb_1, dRb_2, dRb_3, dRb_4, dRb_5, dRb_6;
 	float Rs_equiv_hor;
 	float rLat=dLat*pi/180.f;//(dLat in degree, rLat in radian)
 	float rslope=slope*pi/180.f;//(slope in degree, rslope in radian)
 	float dAzimuth=Azimuth*pi/180.f;//(Azimuth in degree, dAzimuth in radian)
 	
 	
-    // Solar Radiation and Reference Evapotranspiration on Inclined Surface
+    // Solar Radiation on Inclined Surface
 
 	//Steps 1 though 18 are general for the basin *****************************
-	// STEP 1 - Estimate mean daily dewpoint temperature over the basin from
-	//			the reference basin (average basin elevation)
-	dTdew = T_dew_basin; // ???
 
 	// STEP 2	Calculate general, actual vapor pressure for use in the
 	//			Penman-Monteith equation and for estimating precipitable water
 	//			(W) over the application area
-	if(bRH && RHmin > 0) // ??? bRH is bool flag for max RH data
-		d_ea_general = (e0(T_min_basin)*RHmax/100+e0(T_max_basin)*RHmin/100)/2;		//Eq. 17 Allen et al 1998
-	else if (bRH)
-		d_ea_general = e0(T_min_basin)*RHmax/100;									//Eq. 18 Allen et al 1998
-	else
-		d_ea_general = e0(dTdew);													//(Eq. 14, p 37, FAO-56) [kPa]
-
+	d_ea_general = (e0(T_min_cell)+e0(T_max_cell))/2*RHmean/100; //Eq. 19 Allen et al 1998
+	
 	// STEP 3	Calculate the inverse square relative distance between earth
 	//and sun
 	d_dr = 1.f+0.033f*cos(2.f*pi*DOY/365.f);										// (Eq. 23, p46, FAO 56)
@@ -3561,7 +3574,7 @@ void RefET_fcn(int DOY,float T_avg_cell,float T_max_cell,float T_min_cell,
 	// STEP 8	Calculate mean atmospheric pressure for the reference weather
 	//basin using the average elevation of the basin
 	// Should grid cell elevation be used ???
-	P_basin = 101.3f*pow((293.f-0.0065f*elev_basin_average)/293.f,5.26f);			//FAO-56 Equation 3-4, page 224
+	P_basin = 101.3f*pow((293.f-0.0065f*elev_cell)/293.f,5.26f);			//FAO-56 Equation 3-4, page 224
 
 	// STEP 9	Calculate precipitable water at the reference weather basin
 	dW = 0.14f*d_ea_general*P_basin+2.1f;											//FAO-56 Equation 3-19, p. 227
@@ -3581,7 +3594,7 @@ void RefET_fcn(int DOY,float T_avg_cell,float T_max_cell,float T_min_cell,
 
 	// STEP 13	Estimate 'measured' solar radiation on a horizontal surface
 	//(Hargreave's Method)
-	Rsm_hor = K_rs*pow((T_max_basin - T_min_basin),0.5f)*Ra_hor;					// Eq. 50, p 60 FAO-56 (MJ m-2 d-1)
+	Rsm_hor = K_rs*pow((T_max_cell - T_min_cell),0.5f)*Ra_hor;					// Eq. 50, p 60 FAO-56 (MJ m-2 d-1)
 	// Allen (1997) recommends k_rs = 0.19 for high altitude
 	// Measure solar radiation if available can be substituted here
 
@@ -3742,15 +3755,6 @@ void RefET_fcn(int DOY,float T_avg_cell,float T_max_cell,float T_min_cell,
 	//or equal to d_es
 	d_ea = MIN_2(d_ea_general,d_es); // (kPa)
 
-	// STEP 30	Slope of Saturation vapor pressure curve (kPa ºC-1)
-	slope_es = slope_es_fcn(T_avg_cell);
-
-	// STEP 31 atmospheric pressure at cell (kPa)
-	dCellP = CellP_fcn(elev_cell);
-
-	// STEP 32	Psychometric constant (kPa·ºC^-1)
-	dPsych = Psych_fcn(dCellP);
-
 	// STEP 33	Calculate the horizontal equivalent for net short wave
 	//radiation on the incline
 	dRns = (1.f - albedo)*Rs_equiv_hor;											// Eq. 38, p. 51, FAO-56
@@ -3764,20 +3768,7 @@ void RefET_fcn(int DOY,float T_avg_cell,float T_max_cell,float T_min_cell,
 	d_Rn = dRns - d_Rnl;														// Eq. 40, p. 53, FAO-56)
 	d_Rn = MAX_2(d_Rn,0.f);														//Fix for high slope cells
 
-	// STEP 36	Calculate ET0
-	dET0 = (0.408f*slope_es*d_Rn+dPsych*900.f/(T_avg_cell+273.f)*windspeed*
-		(d_es-d_ea))/(slope_es+dPsych*(1.f+0.34f*windspeed));// Eq 6, p. 24, FAO-56
-
-	RefET_OUT[0] = dET0;
-	RefET_OUT[1] = Ra_hor;
-	RefET_OUT[2] = Rso_hor;
-	RefET_OUT[3] = Rsm_hor;
-	RefET_OUT[4] = Rsm_inc;
-	RefET_OUT[5] = Rs_equiv_hor;
-	RefET_OUT[6] = dRns;
-	RefET_OUT[7] = d_Rnl;
-	RefET_OUT[8] = d_Rn;
-	RefET_OUT[9] = 24/pi*d_ws; //number of daylight hours for horizontal surface (Allen et al 1998, eq. 34)
+	return (d_Rn);
 
 }
 
