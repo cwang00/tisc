@@ -29,6 +29,9 @@ int Allocate_Memory_for_external_use()
 		elk = alloc_matrix(Ny, Nx);
 		etr = alloc_matrix(Ny, Nx);
 		eth = alloc_matrix(Ny, Nx);
+		et_tot = alloc_matrix(Ny, Nx);
+		et_tot_ant = alloc_matrix(Ny, Nx);
+		relHumidity = alloc_matrix(Ny, Nx);
 		precipitation      	= alloc_matrix(Ny, Nx);
 		precipitation_snow 	= alloc_matrix(Ny, Nx);
 		precipitation_file  	= alloc_matrix(Ny, Nx); 

@@ -98,7 +98,8 @@ float	zini, 				/*altitude of the initial plate position over the sea level [m]*
 	random_topo=0, 			/*Maximum random variation of initial topo*/
 	**var_sea_level, 		/*Array [n,2] with sea level along time*/
 	**var_eros_level, 		/*Variations of the erosion level (height dividing erosion and sedimentation, measured from sea_level)*/
-	**T_mean_annual_file, 	/*Array [n,2] with mean annual temperature along time [degree centigrade]*/
+	**T_mean_annual_file, 	/*Array [N_dt_eros,3] with mean annual temperature and annual temperature range [degree centigrade] along time*/
+	**P_mean_annual_file,	/*Array [N_dt_eros,2] with mean annual precipitation [mm/yr] along time*/
 	*horiz_record_time;		/*Array with times in wich to record horizons*/
 	
 BOOL	switch_dt_output=NO, 

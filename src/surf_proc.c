@@ -65,10 +65,15 @@ extern float
 	**elk, // lake evaporation [L/T]
 	**etr, // riparian evapotranspiration [L/T]
 	**eth, // hillslope evapotranspiration [L/T]
+	**et_tot, // total evapotranspiration from grid cells [L/T]
+	**et_tot_ant, // Total evapotranspiration from previous erosion/LSM time step [L/T]
+	**relHumidity, // Relative humidity at each erosition time step [-]
 	**precipitation, 
 	**precipitation_snow, 
 	**precipitation_file, 
 	**topo, 
+	**slope_grid,
+	**azimuth_grid,
 	**accumul_erosion, 
 	**Blocks_base;
 
@@ -124,7 +129,7 @@ int 	read_file_node_defs(float dt_st);
 
 /*Declaration of functions related to upgraded land surface model*/
 float 	et_riparian_hillslope(float Qw,float dd,int row,int col);
-int 	land_surface_process();
+int 	land_surface_process(void);
 float 	evaporation_penman_equilibrium(float d_Rn,float T_avg_cell,float elev_cell);
 float 	evapotranspiration_potential(int DOY,float T_avg_cell,float dLat);
 float 	evapotranspiration_actual(float P, float PET);
@@ -2985,6 +2990,7 @@ int Calculate_Precipitation_Evaporation ()
 		break;
 		}
 		case 4: {
+			Orographic_Precipitation_Evaporation_conservative (Krain, windazimut, relative_humidity);
 			land_surface_process();
 		}
 	}
@@ -3194,7 +3200,7 @@ int Precipitation_Evaporation_at_cell (int i, int j, float *Wcol, float windvel,
 {
 	float 	beta=.3;  	/*!! better beta = 0.3, pero en sumision de altiplano esta con 1*/
 	float 	Wmax; 		/*Water content in a column, and maximum water content*/
-
+	float 	et_recycle; // Total ET [m/s] over each grid cell from previous time step for moisture recycling
 	/*Calculate P,E based on the water Wcol coming into this column from the upwind column*/
 	
 	/*Max. amount of water in the column to reach saturation:*/
@@ -3203,6 +3209,7 @@ int Precipitation_Evaporation_at_cell (int i, int j, float *Wcol, float windvel,
 	PRINT_DEBUG("[%d][%d]  rain=%.2e mm/yr, Wmax=%.2e  Wcol=%.2e m", i, j, rain*secsperyr*1e3, Wmax, *Wcol);
 	if (Wmax>1e-5) {
 			/*Precipitation is proportional to the quotient between the water Wcol coming into this column from the upwind column and the Wmax*/
+			relHumidity[i][j] = (*Wcol)/Wmax;
 			precipitation[i][j] = rain * (*Wcol) / Wmax;
 
 			/*limit precipitation to at least 0*/
@@ -3217,17 +3224,24 @@ int Precipitation_Evaporation_at_cell (int i, int j, float *Wcol, float windvel,
 
 			/*limit evaporation to at least 0*/
 			evaporation[i][j] = MAX_2(0, evaporation[i][j]);
-
+			et_recycle = evaporation[i][j];
+		// Use calculated ET from previous time step land surface modeling
+		// This is only used to contribute to ET recycle and
+		// precipitation over downwind grid cell.
+		// ChaoWang202007161114
+		if (hydro_model == 4 && idt_eros > 0.0) et_recycle = MAX_2(0, et_tot_ant[i][j]);
 			/*calculate change in water content in column (in m of water)*/
 			*Wcol -= precipitation[i][j] * dtwind;
 			if (lake_former_step[i][j]) {
-			*Wcol += evaporation[i][j] * dtwind;
+			// *Wcol += evaporation[i][j] * dtwind;
 			}
+		*Wcol += et_recycle * dtwind; // ChaoWang202007241726
 	}
 	else {
 		precipitation[i][j] = 0;
 		evaporation[i][j] = evaporation_ct * (1+beta*windvel);
 	}
+	if (hydro_model == 4) evaporation[i][j] = MAX_2(0, elk[i][j]); // ChaoWang202007241728
 	if (fabs(precipitation[i][j]*secsperyr)>1e3 || fabs(evaporation[i][j]*secsperyr)>1e3 || isnan(precipitation[i][j]) || isnan(evaporation[i][j])) 
 		PRINT_ERROR("\aPrecipitation: [%d][%d] P,E = %.4f , %.4f m/yr  %.2f h  windvel=%.2f m/s, %.2f m/yr, Wmax=%f m", i, j, precipitation[i][j]*secsperyr, evaporation[i][j]*secsperyr, dtwind/3600, windvel, rain*secsperyr, Wmax);
 	return(1);
@@ -3257,6 +3271,12 @@ float max_water_in_air_colum (int i, int j)
 	for (z=0; z<10000; z+=dz) {
 		float temp_air;
 		temp_air = TEMPERATURE_AIR(topoC, z);
+		// Use temperature record if available
+		// ChaoWang202007161123
+		float Tmaa_zr=T_mean_annual_file[idt_eros,1];
+		if (Tmaa_zr>-9998){
+			temp_air = TEMPERATURE_REFZ2AIR(Tmaa_zr,topoC,z);
+		}
 		L = 2.4995e6+(temp_air-TEMP_FREEZE_WATER)*2359;
 		esat = es0*exp(L/Rv*(1/TEMP_FREEZE_WATER - 1/temp_air));
 		Wmax += esat/temp_air/Rv/denswater*dz; /*Blocks: m of water*/
@@ -3309,52 +3329,63 @@ int land_surface_process(){
 	Tmaa_zr = T_mean_annual_file[idt_eros,1];
 	Rmmt = T_mean_annual_file[idt_eros,2];
 	Pma_zr = P_mean_annual_file[idt_eros,1];
-
-
-	
-
+	evapotranspiration_grid(Tmaa_zr, Rmmt, Pma_zr);
 	return (1);
 }
 
 
 float evapotranspiration_grid(float Tmaa_zr, float Rmmt, float Pma_zr){
 	int row, col, il, imon, imontot;
-	const float rheight = 1000.0; // Reference elevation of mean annual temperature [m]
+	const float rheight = 2000.0; // Reference elevation of mean annual temperature [m]
 	float Tmaz; // Mean annual temperature at elevation z [degC];
 	float Tmmz[12]; // Mean monthly temperature at elevation z [degC];
-	float Tdc[12];
+	float Tdc[12]; // Daily temperature variation [degC]
+	// Idt, Sdt: Regression coefficients of daily temperature variation
 	float Idt[12] = {22.5, 25.7, 28.8, 32.0, 33.7, 35.3,
 					 37.0, 34.0, 31.0, 28.0, 26.2, 24.3};
 	float Sdt[12] = {0.004, 0.005, 0.006, 0.007, 0.012, 0.018,
 					 0.023, 0.019, 0.014, 0.010, 0.008, 0.006};
 	float Tmzmax[12], Tmzmin[12]; // Maximum and minimum temperatures for each month [degC]
-	float Pmaz; // Mean annual precipitation [mm/yr] at elevation z;
-	float Rn, pressure, PET;
+	float Pmaz; // Mean annual precipitation [m/s] at elevation z;
+	float Rn, pressure, PET; // Solar radiation, air pressure, potential ET
+	// Kcln: the atmospheric clearness (turbidity) coefficient
+	// K_rs: the adjustment coefficient for calculation of "measured" solar radiation
 	float T_avg, T_max, T_min, windcell, Kcln, K_rs, cellalbedo, elev_cell,
 		  slope, Lat_avg, Azimuth;
 	/*
-	Tmaa: Mean annual temperature anomaly at reference elevation [degC]
 	elk: lake evaporation [L/T]
 	etr: riparian evapotranspiration [L/T]
 	eth: hillslope evapotranspiration [L/T]
 	The unit originally in TISC is m/s
-
-	float **elk, **etr, **eth;
-	elk = alloc_matrix(Ny, Nx);
-	etr = alloc_matrix(Ny, Nx);
-	eth = alloc_matrix(Ny, Nx);
 	*/
 	// Set default values
 	windcell = Krain; Kcln = 0.8; K_rs = 0.19; cellalbedo = 0.23;
+	arcslope(Ny, Nx, dy, dx, topo, slope_grid);
+	arcaspect(Ny, Nx, dy, dx, topo, azimuth_grid);
 	for (row=0; row<Ny; row++)
 		for (col=0; col<Nx; col++){
 			elk[row][col] = 0; etr[row][col] = 0; eth[row][col] = 0;
 			elev_cell = topo[row][col];
 			il = drainage[row][col].lake;
-			if (il) elev_cell = Lake[il].alt;
+			if (il) {
+				elev_cell = topo[Lake[il].row[Lake[il].n-1]][Lake[il].col[Lake[il].n-1]];
+				IF_LAKE_IS_SEA(il) elev_cell = sea_level;
+			}
+			//else
+				//elev_cell = MAX_2(elev_cell, sea_level);
+			
 			Tmaz = TEMPERATURE_REFZ2Z(Tmaa_zr,elev_cell);
+			// Should we use modelled cell precipitation here?
+			// No. The daily temperature variation was regressed on this precipitation.
 			Pmaz = PRECIPITATION_REFZ2Z(Pma_zr,elev_cell); // [m/s]
-			for (imon=0; imon<12; imon++)
+			// RHmean can be from precipitation model
+			RHmean = relHumidity[row][col];
+			// Initial Lat_avg can be stored in and read from *.ZINI file
+			// Lat_avg for one cell can change due to tectonics
+			Lat_avg = ymax-row*dy;
+			slope = slope_grid[row][col];
+			Azimuth = azimuth_grid[row][col];
+			for (imon=0; imon<12; imon++) {
 				imontot = idt_eros*12+imon; // Counter of months along the erosion time step
 				Tmmz[imon] = Tmaz + Rmmt*sin(2.0*pi/12.0*(imon+1.0+8.5));
 				Tdc[imon] = 0.5*(Idt[imon] - Sdt[imon]*Pmaz); // Daily temperature variation
@@ -3366,14 +3397,16 @@ float evapotranspiration_grid(float Tmaa_zr, float Rmmt, float Pma_zr){
 							elev_cell, slope, Azimuth);
 				
 				if (il){
-					elk[row][col] = evaporation_penman_equilibrium(Rn,T_avg,elev_cell);
-					evaporation[row][col] = elk[row][col];
+					elk[row][col] = elk[row][col]+1.0/12.0*evaporation_penman_equilibrium(Rn,T_avg,elev_cell);
 				}
 				else {
-					etr[row][col] = evapotranspiration_potential(DOY_month[iday],T_avg,Lat_avg);
-					eth[row][col] = evapotranspiration_actual(pressure, PET);
+					etr[row][col] = etr[row][col]+1.0/12.0*evapotranspiration_potential(DOY_month[iday],T_avg,Lat_avg);
+					eth[row][col] = eth[row][col]+1.0/12.0*evapotranspiration_actual(Pmaz, etr[row][col]);
 				}
+			}
+			evaporation[row][col] = elk[row][col];
 		}
+	return (1);
 }
 
 
@@ -3445,9 +3478,139 @@ float width_riparian(float wc, float kr, float ar){
 }
 
 
+/*
+ Aspect using ArcGIS algorithm
+ https://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-aspect-works.htm
+ ChaoWang202004301739
+*/
+void arcaspect(int nr, int nc, float dy, float dx, float **zz, float **asp){
+    
+    const float PI = 3.141592654;
+    const int testflg = 0;
+    float dzxe, dzye;
+    int ir, ic;
+    float dzx[nr][nc], dzy[nr][nc];
+    arcdzxy(nr, nc, dy, dx, zz, dzx, dzy);
+    // Calculate aspect
+    for (ir=0; ir<nr; ir++)
+        for (ic=0; ic<nc; ic++){
+            dzxe = dzx[ir][ic];
+            dzye = dzy[ir][ic];
+            asp[ir][ic] = atan2(dzye,-dzxe)*180.0/PI;
+            if (asp[ir][ic] < 0){
+                asp[ir][ic] = 90.0 - asp[ir][ic];
+            }
+            else if (asp[ir][ic] > 90.0) {
+                asp[ir][ic] = 360.0 - asp[ir][ic] + 90.0;
+            }
+            else {
+                asp[ir][ic] = 90.0 - asp[ir][ic];
+            }
+        }
+    // Print and check
+    if (testflg) {
+        printf("Aspect array:\n");
+        for (ir=0; ir<nr; ir++){
+            for (ic=0; ic<nc; ic++){
+                printf("%.2f ", asp[ir][ic]);
+            }
+            printf("\n");
+        }
+    }
+}
+
+
 // Mean slope using ArcGIS algorithm
 // https://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-slope-works.htm
 // ChaoWang202004290928
+void arcslope(int nr, int nc, float dy, float dx, float **zz, float **slp){
+    
+    const float PI = 3.141592654;
+    const int testflg = 0;
+    float dzxe, dzye, rise_run, slope_degrees;
+    int ir, ic;
+    float dzx[nr][nc], dzy[nr][nc];
+    
+    arcdzxy(nr, nc, dy, dx, zz, dzx, dzy);
+    // Calculate mean slope
+    for (ir=0; ir<nr; ir++)
+        for (ic=0; ic<nc; ic++){
+            dzxe = dzx[ir][ic];
+            dzye = dzy[ir][ic];
+            rise_run = sqrtf(dzxe*dzxe+dzye*dzye);
+            slope_degrees = atan(rise_run)*180.0/PI;
+            slp[ir][ic] = slope_degrees;
+        }
+    // Print and check
+    if (testflg) {
+        printf("Slope array:\n");
+        for (ir=0; ir<nr; ir++){
+            for (ic=0; ic<nc; ic++){
+                printf("%.2f ", slp[ir][ic]);
+            }
+            printf("\n");
+        }
+    }
+}
+
+
+/*
+ The rates of change in the x and y directions for the middle cell in a 3*3 window using ArcGIS algorithm
+ https://pro.arcgis.com/en/pro-app/tool-reference/spatial-analyst/how-slope-works.htm
+ ChaoWang202004301743
+ */
+void arcdzxy(int nr, int nc, float dy, float dx, float **zz, float dzx[nr][nc], float dzy[nr][nc]){
+    
+    const int testflg = 0;
+    float zp[nr+2][nc+2];
+    float za, zb, zc, zd, ze, zf, zg, zh, zi;
+    int ir, ic;
+    int ra=-1, rb=-1, rc=-1, rd=0, re=0, rf=0, rg=1, rh=1, ri=1;
+    int ca=-1, cb=0, cc=1, cd=-1, ce=0, cf=1, cg=-1, ch=0, ci=1;
+    // Pad array to avoid edge effects
+    for (ir=1; ir<nr+1; ir++){
+        zp[ir][0] = zz[ir-1][0];
+        zp[ir][nc+1] = zz[ir-1][nc-1];
+        for (ic=1; ic<nc+1; ic++){
+            zp[ir][ic] = zz[ir-1][ic-1];
+        }
+    }
+    for (ic=1; ic<nc+1; ic++){
+        zp[0][ic] = zz[0][ic-1];
+        zp[nr+1][ic] = zz[nr-1][ic-1];
+    }
+    zp[0][0] = zz[0][0];
+    zp[0][nc+1] = zz[0][nc-1];
+    zp[nr+1][0] = zz[nr-1][0];
+    zp[nr+1][nc+1] = zz[nr-1][nc-1];
+    // Calculate mean change rates on padded array
+    for (ir=1; ir<nr+1; ir++)
+        for (ic=1; ic<nc+1; ic++){
+        za = zp[ir+ra][ic+ca];
+        zb = zp[ir+rb][ic+cb];
+        zc = zp[ir+rc][ic+cc];
+        zd = zp[ir+rd][ic+cd];
+        ze = zp[ir+re][ic+ce];
+        zf = zp[ir+rf][ic+cf];
+        zg = zp[ir+rg][ic+cg];
+        zh = zp[ir+rh][ic+ch];
+        zi = zp[ir+ri][ic+ci];
+        dzx[ir-1][ic-1] = ((zc+2.0*zf+zi)-(za+2.0*zd+zg))/(8.0*dx);
+        dzy[ir-1][ic-1] = ((zg+2.0*zh+zi)-(za+2.0*zb+zc))/(8.0*dy);
+    }
+    // Print and check
+    if (testflg) {
+        printf("Padded array:\n");
+        for (ir=0; ir<nr+2; ir++){
+            for (ic=0; ic<nc+2; ic++){
+                printf("%.2f ", zp[ir][ic]);
+            }
+            printf("\n");
+        }
+    }
+}
+
+
 
 
 

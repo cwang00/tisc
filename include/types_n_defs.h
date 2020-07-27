@@ -74,7 +74,8 @@
 #define TEMPERATURE_AIR(topo,height)	(TEMPERATURE_GROUND(topo) - GAMMA_AIR*(height)) /*[K] air temperature*/
 #define TEMPERATURE_SEA2AIR(T_sea_level,topo,height)	(T_sea_level - GAMMA_GROUND*(topo) - GAMMA_AIR*(height)) /*Calculate air temperature [K or degree centigrade] from sea level temperature*/
 #define TEMPERATURE_REFZ2Z(Tmaa_zr,topo) (23.5+Tmaa_zr-0.0063*topo) /*Calculate mean annual temperature [K or degree centigrade] at certain elevation from paleo-temperature anomaly and modern temperature at reference elevation*/
-#define PRECIPITATION_REFZ2Z(Pma_zr,topo) ((0.08*topo+Pma_zr-80.0)/1000.0/365.24/24.0/3600.0) // [m/s]
+#define TEMPERATURE_REFZ2AIR(Tmaa_zr,topo,height) (TEMPERATURE_REFZ2Z(Tmaa_zr,topo) - GAMMA_AIR*(height))
+#define PRECIPITATION_REFZ2Z(Pma_zr,topo) ((Pma_zr+0.08*(topo-2000.0))/1000.0/365.24/24.0/3600.0) // [m/s]
 #define TEMPERATURE(altitude)	(temp_sea_level - GAMMA*(altitude)) /*[K]; "lapse rate constant" in K/m*/
 #define TEMPERATURE_ICE(altitude)	(temp_sea_level + 5*cos(Time/(100e3*secsperyr)*2*3.1415927) - GAMMA*(altitude)) /*in [K]; "lapse rate constant" in K/m*/
 #define IF_LAKE_IS_SEA(il) 	if (il) if (Lake[il].n_sd) if (topo[Lake[il].row_sd[0]][Lake[il].col_sd[0]]<sea_level && AT_BORDER(Lake[il].row_sd[0], Lake[il].col_sd[0]))

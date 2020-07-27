@@ -53,10 +53,15 @@ float 	**D,			/*Equivalent rigidity grid*/
 	**elk, // lake evaporation [L/T]
 	**etr, // riparian evapotranspiration [L/T]
 	**eth, // hillslope evapotranspiration [L/T]
+	**et_tot, // total evapotranspiration from grid cells [L/T]
+	**et_tot_ant, // Total evapotranspiration from previous erosion/LSM time step [L/T]
+	**relHumidity, // Relative humidity at each erosition time step [-]
 	**precipitation,  	/*Runoff distribution (only liquid precipitation)*/
 	**precipitation_snow,  	/*Snowfall distribution*/
 	**precipitation_file,  	/*Runoff distribution defined in file*/
 	**topo,  		/*Topography relative to z=0*/
+	**slope_grid,
+	**azimuth_grid,
 	**accumul_erosion,  	/*Total erosion at each node*/
 	**Blocks_base,		/*Base of Blocks[0] (the lowest) measured from the current position of the original datum surface (now deflected by isostasy*/
 	**w;

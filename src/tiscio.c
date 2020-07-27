@@ -820,32 +820,43 @@ int read_file_sea_level()
 
 int read_file_temperature(int n_temperature_points) {
 // Read temperature time series from paleoclimate data
-// Mean annual temperature is provided for each erosion time step (1000 year)
-// Total number of data points is then (number of erosion time steps)
+// Mean annual temperature and range are provided for each erosion time step (1000 year)
+// Total number of data points is then (number of erosion time steps N_dt_eros)
 // ChaoWang202006071641
-	int n_temp_input_points=0;
-	FILE 	*file;
+	
+	FILE *file = NULL;
+	char auxstr[MAXLENLINE], *lin;
 	
 	Read_Open_Filename_Return(".TMA", "rt", "Mean annual temperature")
 
-	T_mean_annual_file = alloc_matrix(n_temperature_points, 2);
+	T_mean_annual_file = alloc_matrix(n_temperature_points, 3);
 	
-	for (;;) {
-		char auxstr[MAXLENLINE], *lin;
-		int nfields=0;
-		while (nfields<2) {
-			lin=fgets(auxstr, MAXLENLINE-1, file);
-			if (lin==NULL) break;
-			nfields=sscanf(lin, "%f %f",
-				T_mean_annual_file[n_temp_input_points][0],
-				T_mean_annual_file[n_temp_input_points][1]);
-		};
+	for (int ip=0; ip<n_temperature_points; ip++) {
+		lin = fgets(auxstr, MAXLENLINE-1, file);
 		if (lin==NULL) break;
-		n_temp_input_points++;
-		if (n_temp_input_points>=n_temperature_points-1 ) {
-			PRINT_ERROR("Too many points (%d) in mean annual temperature file.", n_temp_input_points);
-			break;
-		}
+		sscanf(lin, "%f %f %f",
+			&T_mean_annual_file[ip][0],
+			&T_mean_annual_file[ip][1],
+			&T_mean_annual_file[ip][2]);
+	};
+	fclose(file);
+	return(1);
+}
+
+int read_file_precipitation(int n_precipitation_points) {
+	// Read precipitation time series from paleoclimate data
+	// Mean annual precipitation is provided for each erosion time step (1000 year)
+	// Total number of data points is then (number of erosion time steps N_dt_eros)
+	// ChaoWang202007231354
+	FILE *file = NULL;
+	char auxstr[MAXLENLINE], *lin;
+	Read_Open_Filename_Return(".PMA", "rt", "Mean annual precipitation")
+	P_mean_annual_file = alloc_matrix(n_precipitation_points, 2);
+	for (int ip=0; ip<n_precipitation_points; ip++) {
+		lin = fgets(auxstr, MAXLENLINE-1, file);
+		sscanf(lin, "%f %f",
+			&P_mean_annual_file[ip][0],
+			&P_mean_annual_file[ip][1]);
 	}
 	fclose(file);
 	return(1);
@@ -1016,6 +1027,8 @@ int read_file_output_Blocks ()
 	dy = (ymax-ymin)/(Ny-1);
 	Blocks_base = alloc_matrix(Ny, Nx);
 	topo = alloc_matrix(Ny, Nx);
+	slope_grid = alloc_matrix(Ny, Nx);
+	azimuth_grid = alloc_matrix(Ny, Nx);
 	Blocks =  (struct BLOCK *) calloc(NmaxBlocks, sizeof(struct BLOCK));
 	for (k=0; k<numBlocks; k++) {
 		Blocks[k].thick = alloc_matrix(Ny, Nx);
