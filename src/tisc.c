@@ -285,6 +285,8 @@ int inputs (int argc, char **argv)
 	read_file_horiz_record_time();
 	read_file_Te();
 	read_file_rain(precipitation_file);
+	read_file_temperature(N_dt_eros);
+	read_file_precipitation(N_dt_eros);
 
 	switch_initial_geom = read_file_initial_deflection(w) + read_file_initial_topo(topo) ;
 	for (i=0; i<Ny; i++)  for (j=0; j<Nx; j++)  

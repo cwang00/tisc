@@ -68,6 +68,8 @@ extern float
 	**et_tot, // total evapotranspiration from grid cells [L/T]
 	**et_tot_ant, // Total evapotranspiration from previous erosion/LSM time step [L/T]
 	**relHumidity, // Relative humidity at each erosition time step [-]
+	**T_mean_annual_file,
+	**P_mean_annual_file,
 	**precipitation, 
 	**precipitation_snow, 
 	**precipitation_file, 
@@ -128,8 +130,11 @@ int 	Landslide_Transport (float critical_slope, float dt, float dt_eros);
 int 	read_file_node_defs(float dt_st);
 
 /*Declaration of functions related to upgraded land surface model*/
+void 	arcslope(int nr, int nc, float dy, float dx, float **zz, float **slp);
+void 	arcdzxy(int nr, int nc, float dy, float dx, float **zz, float dzx[nr][nc], float dzy[nr][nc]);
 float 	et_riparian_hillslope(float Qw,float dd,int row,int col);
 int 	land_surface_process(void);
+void 	evapotranspiration_grid(float Tmaa_zr, float Rmmt, float Pma_zr);
 float 	evaporation_penman_equilibrium(float d_Rn,float T_avg_cell,float elev_cell);
 float 	evapotranspiration_potential(int DOY,float T_avg_cell,float dLat);
 float 	evapotranspiration_actual(float P, float PET);
@@ -139,7 +144,7 @@ float   e0(float TT);
 float   slope_es_fcn(float T_avg);
 float   Psych_fcn(float dCellP);
 float   Pair_fcn(float elev);
-void    netSolarRadiation(int DOY,float T_max_cell,float T_min_cell,
+float    netSolarRadiation(int DOY,float T_max_cell,float T_min_cell,
 				float RHmean,float windspeed,float Kcln,float K_rs,
 				float albedo,float dLat,float elev_cell, float slope,
 				float Azimuth);
@@ -382,6 +387,10 @@ int Calculate_Discharge (struct GRIDNODE *sortcell, float *total_lost_water, flo
 			}
 
 			/*Calculate the distance to the output node*/
+			/*
+			This is used in the calculation of discharge lost along the network
+			during water transfer through lost_rate. ChaoWang202007281820
+			*/
 			switch (drainage[row][col].type) {
 			  case 'R': // This runs the code for 'E'
 			  case 'E':
@@ -443,6 +452,28 @@ int Calculate_Discharge (struct GRIDNODE *sortcell, float *total_lost_water, flo
 				else factor = 0;
 				*total_evap_water += drainage[row][col].discharge * factor;
 				drainage[row][col].discharge -= drainage[row][col].discharge * factor;
+				float factor2;
+				if (input_disch) factor2 = MIN_2(1, input_disch/lake_evap);
+				for (int i=0; i<Lake[il].n; i++)
+					et_tot_ant[Lake[il].row[i]][Lake[il].col[i]] = evaporation[Lake[il].row[i]][Lake[il].col[i]] * factor2;
+			}
+
+			// When we reach a node (row, col), all nodes higher than this node
+			// has been accounted. So now discharge at this node is the
+			// cumulative discharge with ET and loss in upstream deducted.
+			// Deduct riparian ET and channel infiltration for river node here.
+			// ChaoWang202004221132
+
+			// Note that now this is applied to all types of cells before
+			// water transfer. Should this be applied to only river cells?
+			// ChaoWang202005301727
+			if (hydro_model == 4 && drainage[row][col].type == 'R'){
+				float et_rh; // Riparian and hillslope evapotranspiration
+				// Upgraded ET from riparian and hillslope area, ChaoWang202004241028
+				et_rh = et_riparian_hillslope(drainage[row][col].discharge,dd,row,col);
+				et_tot_ant[row][col] = et_rh;
+				*total_evap_water += MIN_2(et_rh*dx*dy, drainage[row][col].discharge);
+				drainage[row][col].discharge -= MIN_2(et_rh*dx*dy, drainage[row][col].discharge);
 			}
 
 			/*Underground seepage of part of the water to lower nodes*/
@@ -490,28 +521,15 @@ int Calculate_Discharge (struct GRIDNODE *sortcell, float *total_lost_water, flo
 			/*Transfers water.*/
 			if (IN_DOMAIN(drow, dcol)) {
 				/*Remove evapotranspirated water from the rivers*/
-
-				// When we reach a node (row, col), all nodes higher than this node
-				// has been accounted. So now discharge at this node is the
-				// cumulative discharge with ET and loss in upstream deducted.
-				// Deduct riparian ET and channel infiltration for river node here.
-				// ChaoWang202004221132
-
-				// Upgraded ET from riparian and hillslope area, ChaoWang202004241028
-
-				// Note that now this is applied to all types of cells before
-				// water transfer. Should this be applied to only river cells?
-				// ChaoWang202005301727
-				if (hydro_model == 4){
-					float et_rh; // Riparian and hillslope evapotranspiration
-					et_rh = et_riparian_hillslope(drainage[row][col].discharge,dd,row,col);
-					*total_evap_water += et_rh*dx*dy;
-					drainage[row][col].discharge -= et_rh*dx*dy;
-				}
-				else{
-					*total_evap_water			 	+= drainage[row][col].discharge * MIN_2(lost_rate*dd, 1);
-					drainage[row][col].discharge	-= drainage[row][col].discharge * MIN_2(lost_rate*dd, 1);
-				}
+				/*
+				Evapotranspiration is now calculated by the upgraded
+				ET model for riparian and hillslope area. The lost_rate
+				can be used to represent infiltration loss during transfer.
+				Otherwise set lost_rate = 0.
+				ChaoWang202007281837
+				*/ 
+				*total_evap_water			 	+= drainage[row][col].discharge * MIN_2(lost_rate*dd, 1);
+				drainage[row][col].discharge	-= drainage[row][col].discharge * MIN_2(lost_rate*dd, 1);
 				// Transfers water
 				switch (drainage[drow][dcol].type) {
 				case 'L':
@@ -521,6 +539,10 @@ int Calculate_Discharge (struct GRIDNODE *sortcell, float *total_lost_water, flo
 					/*Drain to the lake node*/
 					drainage[drow][dcol].discharge += drainage[row][col].discharge;
 					/*Drain also to its outlet if it has*/
+					/*
+					Note that the down gradient cell of a lake cell
+					is set to the outlet of the lake. ChaoWang202007301642
+					*/
 					if (IN_DOMAIN(drainage[drow][dcol].dr_row, drainage[drow][dcol].dr_col))
 						drainage[drainage[drow][dcol].dr_row][drainage[drow][dcol].dr_col].discharge += drainage[row][col].discharge;
 					else {
@@ -2991,12 +3013,12 @@ int Calculate_Precipitation_Evaporation ()
 		}
 		case 4: {
 			Orographic_Precipitation_Evaporation_conservative (Krain, windazimut, relative_humidity);
-			land_surface_process();
+			
 		}
 	}
 
 	/*Smooth out rain (based on upwind rain)*/
-		if (hydro_model == 2 || hydro_model == 3) if (CXrain) {
+		if (hydro_model == 2 || hydro_model == 3 || hydro_model == 4) if (CXrain) {
 			float windvel=Krain, windvelx, windvely /*[m/s]*/, DL=CXrain, factor, precip_here;
 			int i, j;
 		float **precipitation_aux;
@@ -3029,6 +3051,8 @@ int Calculate_Precipitation_Evaporation ()
 		free_matrix(precipitation_aux, Ny);
 	}
 
+	if (hydro_model==4) land_surface_process();
+	
 	/*Separate snow and rain according to ground temperature*/
 	if (K_ice_eros) {
 		for (row=0; row<Ny; row++) for (col=0; col<Nx; col++) {
@@ -3225,14 +3249,19 @@ int Precipitation_Evaporation_at_cell (int i, int j, float *Wcol, float windvel,
 			/*limit evaporation to at least 0*/
 			evaporation[i][j] = MAX_2(0, evaporation[i][j]);
 			et_recycle = evaporation[i][j];
-		// Use calculated ET from previous time step land surface modeling
+		// Use calculated actual ET from previous time step land surface modeling
 		// This is only used to contribute to ET recycle and
 		// precipitation over downwind grid cell.
 		// ChaoWang202007161114
-		if (hydro_model == 4 && idt_eros > 0.0) et_recycle = MAX_2(0, et_tot_ant[i][j]);
+		if (hydro_model == 4 && idt_eros > 0) et_recycle = MAX_2(0, et_tot_ant[i][j]);
 			/*calculate change in water content in column (in m of water)*/
 			*Wcol -= precipitation[i][j] * dtwind;
 			if (lake_former_step[i][j]) {
+			/*
+			This is problematic because actual lake evaporation is limited
+			by the amount of precipitation plus upstream discharge input to lake.
+			ChaoWang202007301815
+			*/
 			// *Wcol += evaporation[i][j] * dtwind;
 			}
 		*Wcol += et_recycle * dtwind; // ChaoWang202007241726
@@ -3241,7 +3270,10 @@ int Precipitation_Evaporation_at_cell (int i, int j, float *Wcol, float windvel,
 		precipitation[i][j] = 0;
 		evaporation[i][j] = evaporation_ct * (1+beta*windvel);
 	}
-	if (hydro_model == 4) evaporation[i][j] = MAX_2(0, elk[i][j]); // ChaoWang202007241728
+	// Previous time step lake evaporation
+	// This will be overwritten by the current time step evaporation calculation
+	// from the land surface model
+	// if (hydro_model == 4) evaporation[i][j] = MAX_2(0, elk[i][j]); // ChaoWang202007241728
 	if (fabs(precipitation[i][j]*secsperyr)>1e3 || fabs(evaporation[i][j]*secsperyr)>1e3 || isnan(precipitation[i][j]) || isnan(evaporation[i][j])) 
 		PRINT_ERROR("\aPrecipitation: [%d][%d] P,E = %.4f , %.4f m/yr  %.2f h  windvel=%.2f m/s, %.2f m/yr, Wmax=%f m", i, j, precipitation[i][j]*secsperyr, evaporation[i][j]*secsperyr, dtwind/3600, windvel, rain*secsperyr, Wmax);
 	return(1);
@@ -3273,7 +3305,8 @@ float max_water_in_air_colum (int i, int j)
 		temp_air = TEMPERATURE_AIR(topoC, z);
 		// Use temperature record if available
 		// ChaoWang202007161123
-		float Tmaa_zr=T_mean_annual_file[idt_eros,1];
+		float Tmaa_zr;
+		Tmaa_zr = T_mean_annual_file[idt_eros][1];
 		if (Tmaa_zr>-9998){
 			temp_air = TEMPERATURE_REFZ2AIR(Tmaa_zr,topoC,z);
 		}
@@ -3315,6 +3348,8 @@ float et_riparian_hillslope(float Qw,float dd,int row,int col){
 	et = eth[row][col]*(dy*dy-Ar)+etr[row][col]*Ar;
 	// Why is ET from riparian and hillslope area deducted from river discharge?
 	// This is water balance in long time scale. ChaoWang202005301744
+	// River discharge in this model is actually all the runoff (water) from
+	// each grid cell. ChaoWang202007281754
 	if (et > Qw) et = Qw;
 	return (et); // Unit: m^3/s
 }
@@ -3326,15 +3361,15 @@ int land_surface_process(){
 	float Rmmt; // Annual temperature range [degC]
 	float Pma_zr; // Mean annual precipitation [mm/yr] at reference elevation for the study region
 	// Calculate mean annual evapotranspiration [m/s] for each erosion time step
-	Tmaa_zr = T_mean_annual_file[idt_eros,1];
-	Rmmt = T_mean_annual_file[idt_eros,2];
-	Pma_zr = P_mean_annual_file[idt_eros,1];
+	Tmaa_zr = T_mean_annual_file[idt_eros][1];
+	Rmmt = T_mean_annual_file[idt_eros][2];
+	Pma_zr = P_mean_annual_file[idt_eros][1];
 	evapotranspiration_grid(Tmaa_zr, Rmmt, Pma_zr);
 	return (1);
 }
 
 
-float evapotranspiration_grid(float Tmaa_zr, float Rmmt, float Pma_zr){
+void evapotranspiration_grid(float Tmaa_zr, float Rmmt, float Pma_zr){
 	int row, col, il, imon, imontot;
 	const float rheight = 2000.0; // Reference elevation of mean annual temperature [m]
 	float Tmaz; // Mean annual temperature at elevation z [degC];
@@ -3350,7 +3385,7 @@ float evapotranspiration_grid(float Tmaa_zr, float Rmmt, float Pma_zr){
 	float Rn, pressure, PET; // Solar radiation, air pressure, potential ET
 	// Kcln: the atmospheric clearness (turbidity) coefficient
 	// K_rs: the adjustment coefficient for calculation of "measured" solar radiation
-	float T_avg, T_max, T_min, windcell, Kcln, K_rs, cellalbedo, elev_cell,
+	float T_avg, T_max, T_min, RHmean, windcell, Kcln, K_rs, cellalbedo, elev_cell,
 		  slope, Lat_avg, Azimuth;
 	/*
 	elk: lake evaporation [L/T]
@@ -3382,7 +3417,8 @@ float evapotranspiration_grid(float Tmaa_zr, float Rmmt, float Pma_zr){
 			RHmean = relHumidity[row][col];
 			// Initial Lat_avg can be stored in and read from *.ZINI file
 			// Lat_avg for one cell can change due to tectonics
-			Lat_avg = ymax-row*dy;
+			// Temporally assume 111 km per latitude and y = 0 is at the Equator
+			Lat_avg = (ymax-row*dy)/111E3;
 			slope = slope_grid[row][col];
 			Azimuth = azimuth_grid[row][col];
 			for (imon=0; imon<12; imon++) {
@@ -3392,7 +3428,7 @@ float evapotranspiration_grid(float Tmaa_zr, float Rmmt, float Pma_zr){
 				Tmzmax[imon] = Tmmz[imon] + Tdc[imon];
 				Tmzmin[imon] = Tmmz[imon] - Tdc[imon];
 				T_avg = Tmmz[imon]; T_max = Tmzmax[imon]; T_min = Tmzmin[imon];
-				Rn = netSolarRadiation(DOY_month[iday], T_max, T_min,
+				Rn = netSolarRadiation(DOY_month[imon], T_max, T_min,
 							RHmean, windcell, Kcln, K_rs, cellalbedo, Lat_avg, 
 							elev_cell, slope, Azimuth);
 				
@@ -3400,13 +3436,12 @@ float evapotranspiration_grid(float Tmaa_zr, float Rmmt, float Pma_zr){
 					elk[row][col] = elk[row][col]+1.0/12.0*evaporation_penman_equilibrium(Rn,T_avg,elev_cell);
 				}
 				else {
-					etr[row][col] = etr[row][col]+1.0/12.0*evapotranspiration_potential(DOY_month[iday],T_avg,Lat_avg);
-					eth[row][col] = eth[row][col]+1.0/12.0*evapotranspiration_actual(Pmaz, etr[row][col]);
+					etr[row][col] = etr[row][col]+1.0/12.0*evapotranspiration_potential(DOY_month[imon],T_avg,Lat_avg);
+					eth[row][col] = eth[row][col]+1.0/12.0*evapotranspiration_actual(precipitation[row][col], etr[row][col]);
 				}
 			}
 			evaporation[row][col] = elk[row][col];
 		}
-	return (1);
 }
 
 
@@ -3658,7 +3693,7 @@ float Psych_fcn(float Pair){
 }
 
 // Net solar radiation at the incline (but horizontal projection) (MJ m^-2 day^-1)
-void netSolarRadiation(int DOY,float T_max_cell,float T_min_cell,
+float netSolarRadiation(int DOY,float T_max_cell,float T_min_cell,
 	float RHmean,float windspeed,float Kcln,float K_rs,float albedo,
 	float dLat,float elev_cell,float slope,float Azimuth){
 
