@@ -1027,8 +1027,6 @@ int read_file_output_Blocks ()
 	dy = (ymax-ymin)/(Ny-1);
 	Blocks_base = alloc_matrix(Ny, Nx);
 	topo = alloc_matrix(Ny, Nx);
-	slope_grid = alloc_matrix(Ny, Nx);
-	azimuth_grid = alloc_matrix(Ny, Nx);
 	Blocks =  (struct BLOCK *) calloc(NmaxBlocks, sizeof(struct BLOCK));
 	for (k=0; k<numBlocks; k++) {
 		Blocks[k].thick = alloc_matrix(Ny, Nx);

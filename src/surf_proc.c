@@ -3351,7 +3351,7 @@ float et_riparian_hillslope(float Qw,float dd,int row,int col){
 	// River discharge in this model is actually all the runoff (water) from
 	// each grid cell. ChaoWang202007281754
 	if (et > Qw) et = Qw;
-	return (et); // Unit: m^3/s
+	return (et/dx/dy); // Unit: m/s
 }
 
 // Land surface processes for TISC-LSM

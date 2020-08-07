@@ -26,6 +26,8 @@ int Allocate_Memory_for_external_use()
 		sortcell =    	(struct GRIDNODE *) calloc(Nx*Ny, sizeof(struct GRIDNODE));
 		for (j=0; j<Nx; j++)  for (i=0; i<Ny; i++) {sortcell[i*Nx+j].row=i; sortcell[i*Nx+j].col=j;}
 		evaporation      	= alloc_matrix(Ny, Nx);
+		slope_grid = alloc_matrix(Ny, Nx);
+		azimuth_grid = alloc_matrix(Ny, Nx);
 		elk = alloc_matrix(Ny, Nx);
 		etr = alloc_matrix(Ny, Nx);
 		eth = alloc_matrix(Ny, Nx);
