@@ -826,10 +826,15 @@ int read_file_temperature(int n_temperature_points) {
 	
 	FILE *file = NULL;
 	char auxstr[MAXLENLINE], *lin;
-	
-	Read_Open_Filename_Return(".TMA", "rt", "Mean annual temperature")
 
 	T_mean_annual_file = alloc_matrix(n_temperature_points, 3);
+	for (int ip=0; ip<n_temperature_points; ip++) {
+		T_mean_annual_file[ip][0] = -9999;
+		T_mean_annual_file[ip][1] = -9999;
+		T_mean_annual_file[ip][2] = -9999;
+	}
+	
+	Read_Open_Filename_Return(".TMA", "rt", "Mean annual temperature")
 	
 	for (int ip=0; ip<n_temperature_points; ip++) {
 		lin = fgets(auxstr, MAXLENLINE-1, file);
@@ -850,8 +855,14 @@ int read_file_precipitation(int n_precipitation_points) {
 	// ChaoWang202007231354
 	FILE *file = NULL;
 	char auxstr[MAXLENLINE], *lin;
-	Read_Open_Filename_Return(".PMA", "rt", "Mean annual precipitation")
+
 	P_mean_annual_file = alloc_matrix(n_precipitation_points, 2);
+	for (int ip=0; ip<n_precipitation_points; ip++) {
+		P_mean_annual_file[ip][0] = -9999;
+		P_mean_annual_file[ip][1] = -9999;
+	}
+	
+	Read_Open_Filename_Return(".PMA", "rt", "Mean annual precipitation")
 	for (int ip=0; ip<n_precipitation_points; ip++) {
 		lin = fgets(auxstr, MAXLENLINE-1, file);
 		sscanf(lin, "%f %f",
@@ -1337,7 +1348,7 @@ int write_file_drainage ()
 #ifdef SURFACE_TRANSPORT
 	Write_Open_Filename_Return (".xyw", "wt", !switch_write_file_Blocks || Time==Timeini || !hydro_model);
 
-	fprintf(file, "#TISC output: drainage.  sea_level: %.1f m\n# x(km) y(km) water(m3/s) sed[kg/s] type topo[m] x-to y-to topo-to precipt[mm/y] evapora[mm/y] ice_thick[m] ice_sed_load[m] swim_dist[km]\n", sea_level);
+	fprintf(file, "#TISC output: drainage.  sea_level: %.1f m\n# x(km) y(km) water(m3/s) sed[kg/s] type topo[m] x-to y-to topo-to precipt[mm/y] evapora[mm/y] etr[mm/y] eth[mm/y] etrh[mm/y] ice_thick[m] ice_sed_load[m] swim_dist[km]\n", sea_level);
 	for (i=0; i<Ny; i++) for (j=0; j<Nx; j++) {
 		int il, dcol=drainage[i][j].dr_col, drow=drainage[i][j].dr_row, switch_mouth, ik, jk;
 		char dr_type;
@@ -1411,7 +1422,7 @@ int write_file_drainage ()
 			if (distneighb>maxdist) maxdist = distneighb;
 		}
 		
-		fprintf(file, "%7.2f\t%7.2f\t%.2f\t%.2f\t%c\t%.1f\t%7.2f\t%7.2f\t%.1f\t%7.1f\t%7.1f\t%6.1f\t%6.2f\t%6.2f\n",
+		fprintf(file, "%7.2f\t%7.2f\t%.2f\t%.2f\t%c\t%.1f\t%7.2f\t%7.2f\t%.1f\t%7.1f\t%7.1f\t%7.1f\t%7.1f\t%7.1f\t%6.1f\t%6.2f\t%6.2f\n",
 			(xmin+j*dx)/1000, (ymax-i*dy)/1000,
 			drainage[i][j].discharge,
 			drainage[i][j].masstr,
@@ -1419,6 +1430,7 @@ int write_file_drainage ()
 			topo[i][j], 
 			(xmin+dcol*dx)/1000, (ymax-drow*dy)/1000, topo[drow][dcol], 
 			precipitation[i][j]*secsperyr*1e3, evaporation[i][j]*secsperyr*1e3, 
+			etr[i][j]*secsperyr*1e3, eth[i][j]*secsperyr*1e3, et_tot_ant[i][j]*secsperyr*1e3, // Added by ChaoWang202008071529
 			(K_ice_eros)? ice_thickness[i][j] : 0, 
 			(K_ice_eros)? ice_sedm_load[i][j] : 0,
 			maxdist/1e3 );

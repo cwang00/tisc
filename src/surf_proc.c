@@ -442,6 +442,9 @@ int Calculate_Discharge (struct GRIDNODE *sortcell, float *total_lost_water, flo
 			lakes are not recycled into atmospheric water balance calculation.
 			This might serious influence precipitation and ET spatial
 			distribution. ChaoWang202005301722
+			Recycling the moisture using the previous time step actual ET
+			preserves the water balance with a lagged time step.
+			ChaoWang202008121128
 			*/
 			if (drainage[row][col].type == 'E') {
 				float lake_evap=0, input_disch, factor;
@@ -2989,7 +2992,7 @@ int Calculate_Precipitation_Evaporation ()
  			altitude = topo[row][col];
  			il=drainage[row][col].lake;
  			if (il) {
- 				// Return lowest lake elevation
+ 				// Return the highest lake elevation. Lake nodes sorted in Unify_Lakes()
  				altitude = topo[Lake[il].row[Lake[il].n-1]][Lake[il].col[Lake[il].n-1]];
  				/*Sea*/
  				IF_LAKE_IS_SEA(il) altitude = sea_level;
@@ -3248,6 +3251,13 @@ int Precipitation_Evaporation_at_cell (int i, int j, float *Wcol, float windvel,
 
 			/*limit evaporation to at least 0*/
 			evaporation[i][j] = MAX_2(0, evaporation[i][j]);
+			/*
+			Lake evaporation can be smaller than this rate if
+			precipitation plus upstream discharge input to the lake
+			is smaller than evaporation.
+			This won't be an issue if hydro_model == 4 is used.
+			ChaoWang202008072231
+			*/
 			et_recycle = evaporation[i][j];
 		// Use calculated actual ET from previous time step land surface modeling
 		// This is only used to contribute to ET recycle and
@@ -3406,8 +3416,6 @@ void evapotranspiration_grid(float Tmaa_zr, float Rmmt, float Pma_zr){
 				elev_cell = topo[Lake[il].row[Lake[il].n-1]][Lake[il].col[Lake[il].n-1]];
 				IF_LAKE_IS_SEA(il) elev_cell = sea_level;
 			}
-			//else
-				//elev_cell = MAX_2(elev_cell, sea_level);
 			
 			Tmaz = TEMPERATURE_REFZ2Z(Tmaa_zr,elev_cell);
 			// Should we use modelled cell precipitation here?
@@ -3424,7 +3432,7 @@ void evapotranspiration_grid(float Tmaa_zr, float Rmmt, float Pma_zr){
 			for (imon=0; imon<12; imon++) {
 				imontot = idt_eros*12+imon; // Counter of months along the erosion time step
 				Tmmz[imon] = Tmaz + Rmmt*sin(2.0*pi/12.0*(imon+1.0+8.5));
-				Tdc[imon] = 0.5*(Idt[imon] - Sdt[imon]*Pmaz); // Daily temperature variation
+				Tdc[imon] = 0.5*(Idt[imon] - Sdt[imon]*Pmaz*secsperyr*1000); // Daily temperature variation
 				Tmzmax[imon] = Tmmz[imon] + Tdc[imon];
 				Tmzmin[imon] = Tmmz[imon] - Tdc[imon];
 				T_avg = Tmmz[imon]; T_max = Tmzmax[imon]; T_min = Tmzmin[imon];
