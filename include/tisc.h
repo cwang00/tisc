@@ -56,6 +56,8 @@ float 	**D,			/*Equivalent rigidity grid*/
 	**et_tot, // total evapotranspiration from grid cells [L/T]
 	**et_tot_ant, // Total evapotranspiration from previous erosion/LSM time step [L/T]
 	**relHumidity, // Relative humidity at each erosition time step [-]
+	**W_grid, // Vapor in air column [m]
+	**Wmax_grid, // Vapor capacity of air column [m]
 	**precipitation,  	/*Runoff distribution (only liquid precipitation)*/
 	**precipitation_snow,  	/*Snowfall distribution*/
 	**precipitation_file,  	/*Runoff distribution defined in file*/

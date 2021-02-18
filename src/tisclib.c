@@ -35,6 +35,8 @@ int Allocate_Memory_for_external_use()
 		et_tot_ant = alloc_matrix(Ny, Nx);
 		for (j=0; j<Nx; j++) for (i=0; i<Ny; i++) et_tot_ant[i][j] = 0;
 		relHumidity = alloc_matrix(Ny, Nx);
+		W_grid = alloc_matrix(Ny, Nx);
+		Wmax_grid = alloc_matrix(Ny, Nx);
 		for (j=0; j<Nx; j++) for (i=0; i<Ny; i++) relHumidity[i][j] = 0;
 		precipitation      	= alloc_matrix(Ny, Nx);
 		precipitation_snow 	= alloc_matrix(Ny, Nx);

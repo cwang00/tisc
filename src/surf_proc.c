@@ -68,6 +68,8 @@ extern float
 	**et_tot, // total evapotranspiration from grid cells [L/T]
 	**et_tot_ant, // Total evapotranspiration from previous erosion/LSM time step [L/T]
 	**relHumidity, // Relative humidity at each erosition time step [-]
+	**W_grid,
+	**Wmax_grid,
 	**T_mean_annual_file,
 	**P_mean_annual_file,
 	**precipitation, 
@@ -3232,7 +3234,8 @@ int Precipitation_Evaporation_at_cell (int i, int j, float *Wcol, float windvel,
 	
 	/*Max. amount of water in the column to reach saturation:*/
  	Wmax=max_water_in_air_colum(i,j);
-
+ 	W_grid[i][j] = (*Wcol);
+ 	Wmax_grid[i][j] = Wmax;
 	PRINT_DEBUG("[%d][%d]  rain=%.2e mm/yr, Wmax=%.2e  Wcol=%.2e m", i, j, rain*secsperyr*1e3, Wmax, *Wcol);
 	if (Wmax>1e-5) {
 			/*Precipitation is proportional to the quotient between the water Wcol coming into this column from the upwind column and the Wmax*/
@@ -3242,7 +3245,12 @@ int Precipitation_Evaporation_at_cell (int i, int j, float *Wcol, float windvel,
 			/*limit precipitation to at least 0*/
 			precipitation[i][j] = MAX_2(0, precipitation[i][j]);
 			/*limit precipitation to at least the excess water*/
-			precipitation[i][j] = MAX_2((*Wcol-Wmax)/dtwind, precipitation[i][j]);
+			/*
+			This assumption cannot be used for small grid size.
+			Otherwise, very large local precipitation can occur.
+			ChaoWang202008181649
+			*/
+			// precipitation[i][j] = MAX_2((*Wcol-Wmax)/dtwind, precipitation[i][j]);
 	 		/*limit precipitation to at most the available water in column*/
    		precipitation[i][j] = MIN_2(*Wcol/dtwind, precipitation[i][j]);
 
@@ -3381,7 +3389,7 @@ int land_surface_process(){
 
 void evapotranspiration_grid(float Tmaa_zr, float Rmmt, float Pma_zr){
 	int row, col, il, imon, imontot;
-	const float rheight = 2000.0; // Reference elevation of mean annual temperature [m]
+	const float rheight = 1000.0; // Reference elevation of mean annual temperature [m]
 	float Tmaz; // Mean annual temperature at elevation z [degC];
 	float Tmmz[12]; // Mean monthly temperature at elevation z [degC];
 	float Tdc[12]; // Daily temperature variation [degC]
@@ -3422,7 +3430,8 @@ void evapotranspiration_grid(float Tmaa_zr, float Rmmt, float Pma_zr){
 			// No. The daily temperature variation was regressed on this precipitation.
 			Pmaz = PRECIPITATION_REFZ2Z(Pma_zr,elev_cell); // [m/s]
 			// RHmean can be from precipitation model
-			RHmean = relHumidity[row][col];
+			// RHmean = relHumidity[row][col];
+			RHmean = 0.5;
 			// Initial Lat_avg can be stored in and read from *.ZINI file
 			// Lat_avg for one cell can change due to tectonics
 			// Temporally assume 111 km per latitude and y = 0 is at the Equator
