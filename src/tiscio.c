@@ -1348,7 +1348,7 @@ int write_file_drainage ()
 #ifdef SURFACE_TRANSPORT
 	Write_Open_Filename_Return (".xyw", "wt", !switch_write_file_Blocks || Time==Timeini || !hydro_model);
 
-	fprintf(file, "#TISC output: drainage.  sea_level: %.1f m\n# x(km) y(km) water(m3/s) sed[kg/s] type topo[m] x-to y-to topo-to precipt[mm/y] evapora[mm/y] etr[mm/y] eth[mm/y] etrh[mm/y] W[m] Wmax[m] ice_thick[m] ice_sed_load[m] swim_dist[km]\n", sea_level);
+	fprintf(file, "#TISC output: drainage.  sea_level: %.1f m\n# x(km) y(km) water(m3/s) sed[kg/s] type topo[m] x-to y-to topo-to precipt[mm/y] evapora[mm/y] slope azimuth et_eq[mm/y] et_pt[mm/y] et_a[mm/y] etr[mm/y] eth[mm/y] etrh[mm/y] Pmaz[mm/y] W[m] Wmax[m] ice_thick[m] ice_sed_load[m] swim_dist[km]\n", sea_level);
 	for (i=0; i<Ny; i++) for (j=0; j<Nx; j++) {
 		int il, dcol=drainage[i][j].dr_col, drow=drainage[i][j].dr_row, switch_mouth, ik, jk;
 		char dr_type;
@@ -1422,7 +1422,7 @@ int write_file_drainage ()
 			if (distneighb>maxdist) maxdist = distneighb;
 		}
 		
-		fprintf(file, "%7.2f\t%7.2f\t%.2f\t%.2f\t%c\t%.1f\t%7.2f\t%7.2f\t%.1f\t%7.1f\t%7.1f\t%7.1f\t%7.1f\t%7.1f\t%12.6f\t%12.6f\t%6.1f\t%6.2f\t%6.2f\n",
+		fprintf(file, "%7.2f\t%7.2f\t%.2f\t%.2f\t%c\t%.1f\t%7.2f\t%7.2f\t%.1f\t%7.1f\t%7.1f\t%7.1f\t%7.1f\t%7.1f\t%7.1f\t%7.1f\t%7.1f\t%7.1f\t%7.1f\t%7.1f\t%12.6f\t%12.6f\t%6.1f\t%6.2f\t%6.2f\n",
 			(xmin+j*dx)/1000, (ymax-i*dy)/1000,
 			drainage[i][j].discharge,
 			drainage[i][j].masstr,
@@ -1430,8 +1430,10 @@ int write_file_drainage ()
 			topo[i][j], 
 			(xmin+dcol*dx)/1000, (ymax-drow*dy)/1000, topo[drow][dcol], 
 			precipitation[i][j]*secsperyr*1e3, evaporation[i][j]*secsperyr*1e3, 
+			slope_grid[i][j], azimuth_grid[i][j],
+			et_eq[i][j]*secsperyr*1e3, et_pt[i][j]*secsperyr*1e3, et_a[i][j]*secsperyr*1e3,
 			etr[i][j]*secsperyr*1e3, eth[i][j]*secsperyr*1e3, et_tot_ant[i][j]*secsperyr*1e3, // Added by ChaoWang202008071529
-			W_grid[i][j], Wmax_grid[i][j], // Added by ChaoWang202008181458
+			Pmaz_grid[i][j]*secsperyr*1e3, W_grid[i][j], Wmax_grid[i][j], // Added by ChaoWang202008181458
 			(K_ice_eros)? ice_thickness[i][j] : 0, 
 			(K_ice_eros)? ice_sedm_load[i][j] : 0,
 			maxdist/1e3 );
@@ -1474,6 +1476,31 @@ if (switch_copy_out){
 }
 
 
+int write_file_monthly(){
+	int row, col, imon;
+	FILE *file;
+	char fname[300];
+	if (n_image >= 1) {
+		for (imon=0; imon<12; imon++) {
+			sprintf(fname, "%s_%03d.month%02d.xyw", projectname, n_image, imon+1);
+			file = fopen(fname, "wt");
+			fprintf(file, "#TISC monthly output:\nTavg Tmax Tmin RHmean Rn[MJ/m^2/day] et_eq[mm/y] et_pt[mm/y]\n");
+			for (row=0; row<Ny; row++)
+				for (col=0; col<Nx; col++) {
+					fprintf(file, "%7.1f\t%7.1f\t%7.1f\t%7.1f\t%7.1f\t%7.1f\t%7.1f\n",
+						Tavg_mon[imon][row*Nx+col],
+						Tmax_mon[imon][row*Nx+col],
+						Tmin_mon[imon][row*Nx+col],
+						RHmean_mon[imon][row*Nx+col],
+						Rn_mon[imon][row*Nx+col],
+						et_eq_mon[imon][row*Nx+col]*secsperyr*1e3,
+						et_pt_mon[imon][row*Nx+col]*secsperyr*1e3);
+			}
+			fclose(file);
+		}
+	}
+	return (1);
+}
 
 
 int find_up_river (int row, int col, int *level, int *count, float *length, float *chi, FILE *file, BOOL **done, float ref_discharge)

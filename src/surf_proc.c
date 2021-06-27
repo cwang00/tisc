@@ -62,6 +62,16 @@ extern float
 	**ice_velx_sl, **ice_vely_sl, 
 	**ice_velx_df, **ice_vely_df, 
 	**evaporation, 
+	**Tavg_mon, // Daily average temperature for 12 months
+	**Tmax_mon, // Daily max T for 12 months
+	**Tmin_mon, // Daily min T for 12 months
+	**RHmean_mon, // Daily mean relative humidity for 12 months
+	**Rn_mon, // Solar radiation
+	**et_eq, // penman equilibrium evaporation [L/T]
+	**et_eq_mon,
+	**et_pt, // potential evapotranspiration [L/T]
+	**et_pt_mon,
+	**et_a, // actual evapotranspiration [L/T]
 	**elk, // lake evaporation [L/T]
 	**etr, // riparian evapotranspiration [L/T]
 	**eth, // hillslope evapotranspiration [L/T]
@@ -72,6 +82,7 @@ extern float
 	**Wmax_grid,
 	**T_mean_annual_file,
 	**P_mean_annual_file,
+	**Pmaz_grid,
 	**precipitation, 
 	**precipitation_snow, 
 	**precipitation_file, 
@@ -3400,9 +3411,15 @@ void evapotranspiration_grid(float Tmaa_zr, float Rmmt, float Pma_zr){
 					 0.023, 0.019, 0.014, 0.010, 0.008, 0.006};
 	float Tmzmax[12], Tmzmin[12]; // Maximum and minimum temperatures for each month [degC]
 	float Pmaz; // Mean annual precipitation [m/s] at elevation z;
-	float Rn, pressure, PET; // Solar radiation, air pressure, potential ET
+	// Rn: Solar radiation
+	// pressure: air pressure
+	// PET: potential ET
+	float Rn, et_eq_0, et_pt_0, pressure, PET;
 	// Kcln: the atmospheric clearness (turbidity) coefficient
+	// Kcln ranges from less than 0.5 for extremely turbid,
+	// dusty or polluted air to 1.0 for clean air.
 	// K_rs: the adjustment coefficient for calculation of "measured" solar radiation
+	// (typically 0.16 to 0.19)
 	float T_avg, T_max, T_min, RHmean, windcell, Kcln, K_rs, cellalbedo, elev_cell,
 		  slope, Lat_avg, Azimuth;
 	/*
@@ -3417,6 +3434,7 @@ void evapotranspiration_grid(float Tmaa_zr, float Rmmt, float Pma_zr){
 	arcaspect(Ny, Nx, dy, dx, topo, azimuth_grid);
 	for (row=0; row<Ny; row++)
 		for (col=0; col<Nx; col++){
+			et_eq[row][col] = 0; et_pt[row][col] = 0; et_a[row][col] = 0;
 			elk[row][col] = 0; etr[row][col] = 0; eth[row][col] = 0;
 			elev_cell = topo[row][col];
 			il = drainage[row][col].lake;
@@ -3429,33 +3447,54 @@ void evapotranspiration_grid(float Tmaa_zr, float Rmmt, float Pma_zr){
 			// Should we use modelled cell precipitation here?
 			// No. The daily temperature variation was regressed on this precipitation.
 			Pmaz = PRECIPITATION_REFZ2Z(Pma_zr,elev_cell); // [m/s]
+			Pmaz_grid[row][col] = Pmaz;
 			// RHmean can be from precipitation model
 			// RHmean = relHumidity[row][col];
-			RHmean = 0.5;
+			// RHmean = 0.5;
 			// Initial Lat_avg can be stored in and read from *.ZINI file
 			// Lat_avg for one cell can change due to tectonics
 			// Temporally assume 111 km per latitude and y = 0 is at the Equator
-			Lat_avg = (ymax-row*dy)/111E3;
+			Lat_avg = 36 + (ymax-row*dy)/111E3;
 			slope = slope_grid[row][col];
 			Azimuth = azimuth_grid[row][col];
 			for (imon=0; imon<12; imon++) {
+				Tavg_mon[imon][row*Nx+col] = 0;
+				Tmax_mon[imon][row*Nx+col] = 0;
+				Tmin_mon[imon][row*Nx+col] = 0;
+				RHmean_mon[imon][row*Nx+col] = 0;
+				Rn_mon[imon][row*Nx+col] = 0;
+				et_eq_mon[imon][row*Nx+col] = 0;
+				et_pt_mon[imon][row*Nx+col] = 0;
 				imontot = idt_eros*12+imon; // Counter of months along the erosion time step
 				Tmmz[imon] = Tmaz + Rmmt*sin(2.0*pi/12.0*(imon+1.0+8.5));
+				RHmean = 0.5 + 0.3*sin(2.0*pi/12.0*(imon+1.0+8.5));
 				Tdc[imon] = 0.5*(Idt[imon] - Sdt[imon]*Pmaz*secsperyr*1000); // Daily temperature variation
 				Tmzmax[imon] = Tmmz[imon] + Tdc[imon];
 				Tmzmin[imon] = Tmmz[imon] - Tdc[imon];
 				T_avg = Tmmz[imon]; T_max = Tmzmax[imon]; T_min = Tmzmin[imon];
+				// T_avg = 20; T_max = 30; T_min = 10; // For testing only
 				Rn = netSolarRadiation(DOY_month[imon], T_max, T_min,
 							RHmean, windcell, Kcln, K_rs, cellalbedo, Lat_avg, 
 							elev_cell, slope, Azimuth);
-				
-				if (il){
-					elk[row][col] = elk[row][col]+1.0/12.0*evaporation_penman_equilibrium(Rn,T_avg,elev_cell);
-				}
-				else {
-					etr[row][col] = etr[row][col]+1.0/12.0*evapotranspiration_potential(DOY_month[imon],T_avg,Lat_avg);
-					eth[row][col] = eth[row][col]+1.0/12.0*evapotranspiration_actual(precipitation[row][col], etr[row][col]);
-				}
+				et_eq_0 = evaporation_penman_equilibrium(Rn,T_avg,elev_cell);
+				et_pt_0 = evapotranspiration_potential(DOY_month[imon],T_avg,Lat_avg);
+				et_eq[row][col] = et_eq[row][col]+1.0/12.0*et_eq_0;
+				et_pt[row][col] = et_pt[row][col]+1.0/12.0*et_pt_0;
+				Tavg_mon[imon][row*Nx+col] = T_avg;
+				Tmax_mon[imon][row*Nx+col] = T_max;
+				Tmin_mon[imon][row*Nx+col] = T_min;
+				RHmean_mon[imon][row*Nx+col] = RHmean;
+				Rn_mon[imon][row*Nx+col] = Rn;
+				et_eq_mon[imon][row*Nx+col] = et_eq_0;
+				et_pt_mon[imon][row*Nx+col] = et_pt_0;
+			}
+			et_a[row][col] = evapotranspiration_actual(Pmaz, et_pt[row][col]); // precipitation[row][col]
+			if (il){
+				elk[row][col] = et_eq[row][col];
+			}
+			else {
+				etr[row][col] = et_pt[row][col];
+				eth[row][col] = et_a[row][col];
 			}
 			evaporation[row][col] = elk[row][col];
 		}
@@ -3477,7 +3516,7 @@ float evaporation_penman_equilibrium(float Rn,float Tair,float elev){
 	*/
 	slope_es = slope_es_fcn(Tair); // [kPa/degC] (p. 254, Dingman, 2015)
 	Pair = Pair_fcn(elev); // Atmospheric pressure at elevation elev [kPa] (p. 256, Dingman, 2015)
-	Psych = Psych_fcn(Pair); // Psychometric constant [kPa/degC] (p. 256, Dingman, 2015)
+	Psych = Psych_fcn(Pair); // Psychometric constant [kPa/degC] (eq 6.21, p. 256, Dingman, 2015)
 	Epe = slope_es*Rn/(denswater*lheat*(slope_es+Psych)); // derived unit [m/day]
 	return (Epe/24.0/3600.0); // [m/s]
 }
@@ -3802,7 +3841,7 @@ float netSolarRadiation(int DOY,float T_max_cell,float T_min_cell,
 	if(KBo_hor < 0.15f)
 		KDo_hor = 0.18f+0.82f*KBo_hor;												//FAO-56 Equation 3-20
 	else
-		KDo_hor = 0.35f-0.33f*KBo_hor;												//FAO-56 Equation 3-20
+		KDo_hor = 0.35f-0.36f*KBo_hor;												//FAO-56 Equation 3-20
 
 	// STEP 12	Calculate clear sky solar radiation over the 24-hr period
 	Rso_hor = (KBo_hor + KDo_hor)*Ra_hor;											//Eq. D-1, P. D-7, ASCE; (MJ m-2 d-1)

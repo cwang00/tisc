@@ -50,14 +50,25 @@ float 	**D,			/*Equivalent rigidity grid*/
 	**ice_velx_df, **ice_vely_df, 
 	**q, 
 	**evaporation,  	/*Evaporation distribution*/
+	**Tavg_mon, // Daily average temperature for 12 months
+	**Tmax_mon, // Daily max T for 12 months
+	**Tmin_mon, // Daily min T for 12 months
+	**RHmean_mon, // Daily mean relative humidity for 12 months
+	**Rn_mon, // Solar radiation, monthly
+	**et_eq, // penman equilibrium evaporation [L/T]
+	**et_eq_mon,
+	**et_pt, // potential evapotranspiration [L/T]
+	**et_pt_mon,
+	**et_a, // actual evapotranspiration [L/T]
 	**elk, // lake evaporation [L/T]
 	**etr, // riparian evapotranspiration [L/T]
 	**eth, // hillslope evapotranspiration [L/T]
-	**et_tot, // total evapotranspiration from grid cells [L/T]
+	**et_tot, // area-weighted total evapotranspiration from grid cells [L/T]
 	**et_tot_ant, // Total evapotranspiration from previous erosion/LSM time step [L/T]
 	**relHumidity, // Relative humidity at each erosition time step [-]
 	**W_grid, // Vapor in air column [m]
 	**Wmax_grid, // Vapor capacity of air column [m]
+	**Pmaz_grid, // Precipitation from paleoclimate record and linear regression to elevation [m]
 	**precipitation,  	/*Runoff distribution (only liquid precipitation)*/
 	**precipitation_snow,  	/*Snowfall distribution*/
 	**precipitation_file,  	/*Runoff distribution defined in file*/

@@ -28,6 +28,16 @@ int Allocate_Memory_for_external_use()
 		evaporation      	= alloc_matrix(Ny, Nx);
 		slope_grid = alloc_matrix(Ny, Nx);
 		azimuth_grid = alloc_matrix(Ny, Nx);
+		Tavg_mon = alloc_matrix(12, Ny*Nx);
+		Tmax_mon = alloc_matrix(12, Ny*Nx);
+		Tmin_mon = alloc_matrix(12, Ny*Nx);
+		RHmean_mon = alloc_matrix(12, Ny*Nx);
+		Rn_mon = alloc_matrix(12, Ny*Nx);
+		et_eq = alloc_matrix(Ny, Nx);
+		et_eq_mon = alloc_matrix(12, Ny*Nx);
+		et_pt = alloc_matrix(Ny, Nx);
+		et_pt_mon = alloc_matrix(12, Ny*Nx);
+		et_a = alloc_matrix(Ny, Nx);
 		elk = alloc_matrix(Ny, Nx);
 		etr = alloc_matrix(Ny, Nx);
 		eth = alloc_matrix(Ny, Nx);
@@ -37,6 +47,7 @@ int Allocate_Memory_for_external_use()
 		relHumidity = alloc_matrix(Ny, Nx);
 		W_grid = alloc_matrix(Ny, Nx);
 		Wmax_grid = alloc_matrix(Ny, Nx);
+		Pmaz_grid = alloc_matrix(Ny, Nx);
 		for (j=0; j<Nx; j++) for (i=0; i<Ny; i++) relHumidity[i][j] = 0;
 		precipitation      	= alloc_matrix(Ny, Nx);
 		precipitation_snow 	= alloc_matrix(Ny, Nx);

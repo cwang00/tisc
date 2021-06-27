@@ -1412,6 +1412,7 @@ int Write_Ouput()
 	write_file_Blocks();
 	write_file_cross_section();
 	write_file_drainage();
+	write_file_monthly();
 	write_file_ice();
 	write_file_surftransp();
 	write_file_river_basins();

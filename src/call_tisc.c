@@ -157,6 +157,7 @@ int call_surf_proc_ (
 		//if (verbose_level>=4) 
 		fprintf(stdout, "\nWritting drainage file.  rain=%.2f l/m/a", rain/1e6*Matosec*1e3); fflush(stdout);
 		write_file_drainage ();
+		write_file_monthly();
 		write_file_lakes();
 		/*if (verbose_level>=4) fprintf(stdout, "\nWritting basin file.");
 		write_file_river_basins ();*/
